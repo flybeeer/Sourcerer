@@ -48,6 +48,10 @@ eval/results/*
 .ollama/
 .cache/
 
+# ===== Claude Code (local/runtime; keep shared settings.json if added) =====
+.claude/settings.local.json
+.claude/*.lock
+
 # ===== Editor / OS =====
 .DS_Store
 .idea/

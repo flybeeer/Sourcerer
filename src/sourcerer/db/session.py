@@ -16,6 +16,16 @@ from pgvector.psycopg import register_vector
 from sourcerer.config import get_settings
 
 
+def to_vector_literal(vec: list[float]) -> str:
+    """Format an embedding as a pgvector text literal, e.g. "[0.1,0.2,0.3]".
+
+    Bound as a `%s::vector` parameter so Postgres parses it as a `vector` (a plain
+    Python list would otherwise be sent as double precision[], which the `<=>`
+    operator does not accept).
+    """
+    return "[" + ",".join(repr(float(x)) for x in vec) + "]"
+
+
 @contextmanager
 def connect() -> Iterator[psycopg.Connection]:
     """Yield a pgvector-aware connection, committing on success.

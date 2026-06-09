@@ -10,7 +10,7 @@ import logging
 from pathlib import Path
 
 from sourcerer.config import get_settings
-from sourcerer.db.session import connect, init_schema
+from sourcerer.db.session import connect, init_schema, to_vector_literal
 from sourcerer.ingestion.chunking import chunk_text
 from sourcerer.ingestion.embeddings import embed_texts
 from sourcerer.ingestion.loaders import iter_documents
@@ -44,9 +44,9 @@ def ingest_directory(root: Path) -> dict[str, int]:
             with conn.cursor() as cur:
                 cur.executemany(
                     "INSERT INTO chunks (source, chunk_index, content, embedding) "
-                    "VALUES (%s, %s, %s, %s)",
+                    "VALUES (%s, %s, %s, %s::vector)",
                     [
-                        (source, i, content, embedding)
+                        (source, i, content, to_vector_literal(embedding))
                         for i, (content, embedding) in enumerate(
                             zip(chunks, embeddings, strict=True)
                         )

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sourcerer.db.session import connect
+from sourcerer.db.session import connect, to_vector_literal
 from sourcerer.ingestion.embeddings import embed_query
 
 
@@ -25,14 +25,14 @@ class RetrievedChunk:
 
 def search(query: str, top_k: int) -> list[RetrievedChunk]:
     """Embed the query and return the top_k most similar chunks."""
-    query_embedding = embed_query(query)
+    query_embedding = to_vector_literal(embed_query(query))
     with connect() as conn:
         rows = conn.execute(
             """
             SELECT id, source, chunk_index, content,
-                   1 - (embedding <=> %s) AS score
+                   1 - (embedding <=> %s::vector) AS score
             FROM chunks
-            ORDER BY embedding <=> %s
+            ORDER BY embedding <=> %s::vector
             LIMIT %s
             """,
             (query_embedding, query_embedding, top_k),
