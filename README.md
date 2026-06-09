@@ -70,16 +70,40 @@ embeddings `bge-m3`. Reproduce with `python scripts/run_eval.py`.
   relevancy to **0.95**. Better-ordered, less-noisy context lets the small
   generator ground its answers more reliably — even when retrieval recall is identical.
 - **Latency is the trade-off.** The reranker here is an *LLM listwise* reranker
-  (one extra local-LLM call), costing ~12× latency (205 → 2482 ms) for a marginal
-  quality gain. In production a cross-encoder (`bge-reranker`) would deliver the
-  ranking lift at a fraction of that cost.
+  (one extra local-LLM call), costing ~12× latency (205 → 2482 ms). Whether a
+  cross-encoder is cheaper depends on hardware — measured both below.
 
 **Verdict:** **hybrid** is the clear win over vector-only — materially better
-generation at roughly the same latency. **hybrid+rerank** gives the best ranking
-and relevancy but only pays off once the reranker is a fast cross-encoder rather
-than an LLM. (A noisier, multilingual corpus widens the hybrid-vs-vector gap
-further — vector-only's faithfulness collapsed to ~0.20 when an unrelated
-Thai-language PDF polluted its top-k, while hybrid's keyword signal suppressed it.)
+generation at roughly the same latency. **hybrid+rerank** gives the best ranking,
+but the gain and its cost depend heavily on *which* reranker (see below). (A
+noisier, multilingual corpus widens the hybrid-vs-vector gap further — vector-only's
+faithfulness collapsed to ~0.20 when an unrelated Thai-language PDF polluted its
+top-k, while hybrid's keyword signal suppressed it.)
+
+### Reranker backends: bge cross-encoder vs LLM listwise
+
+Same eval, retrieval metrics only (recall saturates, so MRR + latency tell the story):
+
+| Config | Recall@5 | MRR | Hit rate | Latency ms |
+|--------|---------:|----:|---------:|-----------:|
+| hybrid (no rerank)   | 1.000 | 0.950 | 1.000 | 177 |
+| hybrid + rerank (LLM listwise, `qwen2.5:3b`) | 1.000 | 0.925 | 1.000 | 2577 |
+| hybrid + rerank (cross-encoder, `bge-reranker-v2-m3`) | 1.000 | **1.000** | 1.000 | 7922 |
+
+Two counter-intuitive, measured findings:
+
+- **A weak LLM reranker can *hurt*.** The `qwen2.5:3b` listwise reranker dropped MRR
+  **0.950 → 0.925** — sometimes demoting the relevant doc below where fusion already
+  had it. Reranking is only worth it if the reranker is actually better than your
+  first stage; "add a reranker" is not automatically a win.
+- **The cross-encoder delivers the quality** (MRR → **1.000**, relevant doc always #1)
+  — but on **CPU** the 568M `bge-reranker-v2-m3` is the *slowest* option here (≈7.9s,
+  incl. model load). The textbook "cross-encoders are cheap" holds on GPU or with a
+  smaller cross-encoder (e.g. `bge-reranker-base`); on this CPU box it is not.
+
+**Takeaway:** the right call for *this* setup (small corpus, CPU, 3B generator) is
+plain **hybrid** — near-perfect ranking at ~177 ms. A cross-encoder is the move once
+there's a GPU and a larger corpus where ranking precision matters more.
 
 ## Hybrid Routing
 
