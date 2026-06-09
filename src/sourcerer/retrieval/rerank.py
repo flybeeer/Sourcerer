@@ -1,21 +1,24 @@
 """Reranking stage: re-score fused candidates and keep the best top_k.
 
-Three backends, selected by RERANKER_TYPE:
+Four backends, selected by RERANKER_TYPE:
 - "none"   : passthrough — keep the fused order, just truncate to top_k.
 - "local"  : a local cross-encoder (bge-reranker) via sentence-transformers.
 - "cohere" : Cohere's Rerank API.
+- "llm"    : listwise reranking by the local LLM (one call, no extra deps).
 
 The "local" and "cohere" backends import their (heavy / optional) dependencies
-lazily, so the package installs and runs with just the "none" backend. Install
-extras as needed:  pip install -e ".[rerank]"   or   pip install -e ".[cohere]"
+lazily, so the package installs and runs with just the "none" / "llm" backends.
+Install extras as needed:  pip install -e ".[rerank]"  or  pip install -e ".[cohere]"
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import replace
 from typing import Protocol
 
 from sourcerer.config import Settings
+from sourcerer.llm.ollama_client import OllamaClient
 from sourcerer.retrieval.types import RetrievedChunk
 
 
@@ -96,6 +99,50 @@ class CohereReranker:
         return [replace(chunks[r.index], score=float(r.relevance_score)) for r in result.results]
 
 
+class LLMReranker:
+    """Listwise reranking by the local LLM — one call, no extra dependencies.
+
+    The model is shown the numbered candidates and asked to return the most
+    relevant candidate numbers in order. Falls back to the fused order if the
+    reply can't be parsed.
+    """
+
+    # Cap candidates sent to the LLM to keep the prompt and latency bounded.
+    _MAX_CANDIDATES = 12
+    _SNIPPET_CHARS = 300
+
+    def __init__(self, base_url: str, model: str) -> None:
+        self._client = OllamaClient(base_url=base_url, chat_model=model, embedding_model="")
+
+    def rerank(self, query: str, chunks: list[RetrievedChunk], top_k: int) -> list[RetrievedChunk]:
+        if not chunks:
+            return []
+        candidates = chunks[: self._MAX_CANDIDATES]
+        listing = "\n".join(
+            f"[{i}] {c.content[: self._SNIPPET_CHARS]}" for i, c in enumerate(candidates, start=1)
+        )
+        prompt = (
+            "Rank the candidate passages by how well they help answer the question.\n\n"
+            f"Question: {query}\n\nCandidates:\n{listing}\n\n"
+            f"Return the numbers of the {top_k} most relevant candidates, best first, "
+            "as a comma-separated list (e.g. 3,1,5). Numbers only."
+        )
+        reply = self._client.chat([{"role": "user", "content": prompt}])
+
+        order = [int(n) for n in re.findall(r"\d+", reply)]
+        seen: set[int] = set()
+        ranked: list[RetrievedChunk] = []
+        for n in order:
+            if 1 <= n <= len(candidates) and n not in seen:
+                seen.add(n)
+                ranked.append(candidates[n - 1])
+        # Append any candidates the model omitted, preserving fused order.
+        for i, c in enumerate(candidates, start=1):
+            if i not in seen:
+                ranked.append(c)
+        return ranked[:top_k]
+
+
 def get_reranker(settings: Settings) -> Reranker:
     """Build the reranker selected by RERANKER_TYPE."""
     kind = settings.reranker_type.lower()
@@ -105,4 +152,6 @@ def get_reranker(settings: Settings) -> Reranker:
         return LocalReranker(settings.reranker_model)
     if kind == "cohere":
         return CohereReranker(settings.reranker_model, settings.cohere_api_key)
+    if kind == "llm":
+        return LLMReranker(settings.ollama_base_url, settings.local_model)
     raise ValueError(f"Unknown RERANKER_TYPE: {settings.reranker_type!r}")

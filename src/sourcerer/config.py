@@ -52,9 +52,14 @@ class Settings(BaseSettings):
     rrf_k: int = 60  # reciprocal rank fusion constant
 
     # ---------- Reranker ----------
-    reranker_type: str = "none"  # none | local | cohere  (none = keep fused order)
+    reranker_type: str = "none"  # none | local | cohere | llm  (none = keep fused order)
     reranker_model: str = "bge-reranker-v2-m3"
     cohere_api_key: str = ""
+
+    # ---------- Evaluation (Phase 3) ----------
+    eval_set_path: str = "eval/eval_set.jsonl"
+    eval_corpus_path: str = "eval/corpus"
+    eval_judge_model: str = "qwen2.5:7b"  # LLM-as-judge; swap for a frontier model later
 
     @property
     def dsn(self) -> str:

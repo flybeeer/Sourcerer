@@ -1,0 +1,10 @@
+{"question": "Where is Sourcerer's headquarters located?", "expected_answer": "In Chiang Mai, Thailand.", "relevant_doc_ids": ["offices.md"]}
+{"question": "When did the Lisbon engineering office open?", "expected_answer": "In March 2025.", "relevant_doc_ids": ["offices.md"]}
+{"question": "What is the first-response SLA for Enterprise customers?", "expected_answer": "Within 2 business hours.", "relevant_doc_ids": ["support-slas.md"]}
+{"question": "How quickly are Severity-1 incidents acknowledged?", "expected_answer": "Within 30 minutes, around the clock.", "relevant_doc_ids": ["support-slas.md"]}
+{"question": "What retrieval recall is required before a release is promoted to production?", "expected_answer": "A retrieval recall@5 of at least 0.85.", "relevant_doc_ids": ["lighthouse-release.md"]}
+{"question": "On which day of the week are releases cut?", "expected_answer": "On Tuesdays.", "relevant_doc_ids": ["lighthouse-release.md"]}
+{"question": "How much is the primary on-call stipend per week?", "expected_answer": "400 EUR per week.", "relevant_doc_ids": ["on-call.md"]}
+{"question": "How long are application logs retained?", "expected_answer": "90 days.", "relevant_doc_ids": ["data-retention.md"]}
+{"question": "How many paid vacation days do full-time employees get per year?", "expected_answer": "25 days.", "relevant_doc_ids": ["pto-policy.md"]}
+{"question": "What is the per-diem allowance for domestic travel?", "expected_answer": "60 EUR per day.", "relevant_doc_ids": ["travel-policy.md"]}
