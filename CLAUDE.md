@@ -89,7 +89,7 @@ Update the "Current status" section below as phases complete.
 
 - [x] Phase 1 — MVP (ingestion + vector retrieval + cited generation behind FastAPI POST /query)
 - [x] Phase 2 — Hybrid retrieval (BM25 FTS ∥ vector → RRF → reranker; swappable chunking; vector path kept behind RETRIEVAL_MODE flag)
-- [ ] Phase 3 — Evaluation harness
+- [x] Phase 3 — Evaluation harness (recall@k/MRR/hit + faithfulness/answer-relevancy via LLM judge; vector vs hybrid vs hybrid+rerank table in README)
 - [ ] Phase 4 — Hybrid routing
 - [ ] Phase 5 — Production polish
 - [ ] Phase 6 — GraphRAG (optional)

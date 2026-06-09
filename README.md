@@ -46,8 +46,40 @@ Query → Hybrid Retrieval (vector + BM25 → RRF fusion → reranker)
 
 ## Evaluation Results ⭐
 
-<!-- TODO (Phase 3): comparison table — vector-only vs hybrid vs hybrid+rerank.
-     retrieval metrics (recall@k, MRR, hit rate) + generation metrics (faithfulness, answer relevancy). -->
+Measured with the Phase 3 harness on a 10-question eval set over the synthetic
+`eval/corpus` (12 docs). Generator `qwen2.5:3b`, LLM judge `qwen2.5:7b`,
+embeddings `bge-m3`. Reproduce with `python scripts/run_eval.py`.
+
+| Config | Recall@5 | MRR | Hit rate | Faithfulness | Answer rel. | Latency ms |
+|--------|---------:|----:|---------:|-------------:|------------:|-----------:|
+| vector-only    | 1.000 | 0.950 | 1.000 | 0.900 | 0.880 | 159 |
+| hybrid         | 1.000 | 0.950 | 1.000 | **1.000** | 0.930 | 205 |
+| hybrid+rerank  | 1.000 | **1.000** | 1.000 | 1.000 | **0.950** | 2482 |
+
+**Reading the numbers — which config wins, and why:**
+
+- **Recall@5 and hit rate saturate at 1.0.** With a small corpus the one relevant
+  doc per question always lands in the top 5 — so retrieval *recall* is not a
+  useful discriminator here. This is itself a lesson: recall alone can hide real
+  quality differences.
+- **MRR is the retrieval differentiator.** `hybrid+rerank` reaches a perfect
+  **1.000** (relevant doc always ranked #1) vs **0.950** for the others — the
+  reranker fixed the one case where the right doc sat at rank 2.
+- **Generation metrics show the real story.** Hybrid lifts faithfulness
+  **0.90 → 1.00** and answer relevancy **0.88 → 0.93**; adding the reranker nudges
+  relevancy to **0.95**. Better-ordered, less-noisy context lets the small
+  generator ground its answers more reliably — even when retrieval recall is identical.
+- **Latency is the trade-off.** The reranker here is an *LLM listwise* reranker
+  (one extra local-LLM call), costing ~12× latency (205 → 2482 ms) for a marginal
+  quality gain. In production a cross-encoder (`bge-reranker`) would deliver the
+  ranking lift at a fraction of that cost.
+
+**Verdict:** **hybrid** is the clear win over vector-only — materially better
+generation at roughly the same latency. **hybrid+rerank** gives the best ranking
+and relevancy but only pays off once the reranker is a fast cross-encoder rather
+than an LLM. (A noisier, multilingual corpus widens the hybrid-vs-vector gap
+further — vector-only's faithfulness collapsed to ~0.20 when an unrelated
+Thai-language PDF polluted its top-k, while hybrid's keyword signal suppressed it.)
 
 ## Hybrid Routing
 
@@ -102,9 +134,9 @@ scripts/         CLI entrypoints (ingest, run_eval)
 
 ## Roadmap / Phase Status
 
-- [ ] Phase 1 — MVP: ingestion + vector retrieval + cited generation behind FastAPI
-- [ ] Phase 2 — Hybrid retrieval: BM25 + RRF + reranker + chunking experiments
-- [ ] Phase 3 — Evaluation harness ⭐
+- [x] Phase 1 — MVP: ingestion + vector retrieval + cited generation behind FastAPI
+- [x] Phase 2 — Hybrid retrieval: BM25 + RRF + reranker + swappable chunking
+- [x] Phase 3 — Evaluation harness ⭐ (see results above)
 - [ ] Phase 4 — Hybrid routing
 - [ ] Phase 5 — Production polish (vLLM, observability, guardrails, docker)
 - [ ] Phase 6 — GraphRAG (optional)
