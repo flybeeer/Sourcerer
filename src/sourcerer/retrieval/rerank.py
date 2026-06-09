@@ -43,6 +43,25 @@ class LocalReranker:
         self.model_name = model if "/" in model else f"BAAI/{model}"
         self._model = None  # loaded lazily on first use
 
+    @staticmethod
+    def _best_device() -> str:
+        """Pick the inference device — CUDA if present, otherwise CPU.
+
+        We deliberately force CPU over Apple MPS: on this torch build a large
+        cross-encoder deadlocks inside Metal (`MPSStream::synchronize` never
+        returns), and sentence-transformers auto-selects MPS unless told not to.
+        CPU is fast enough for a *small* cross-encoder — pair this with a small
+        model (e.g. cross-encoder/ms-marco-MiniLM-L6-v2), not a 500M+ one.
+        """
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                return "cuda"
+        except Exception:
+            pass
+        return "cpu"
+
     def _ensure_model(self):
         if self._model is None:
             try:
@@ -52,7 +71,7 @@ class LocalReranker:
                     "Local reranker needs sentence-transformers. "
                     'Install it with: pip install -e ".[rerank]"'
                 ) from exc
-            self._model = CrossEncoder(self.model_name)
+            self._model = CrossEncoder(self.model_name, device=self._best_device())
         return self._model
 
     def rerank(self, query: str, chunks: list[RetrievedChunk], top_k: int) -> list[RetrievedChunk]:
@@ -143,8 +162,12 @@ class LLMReranker:
         return ranked[:top_k]
 
 
-def get_reranker(settings: Settings) -> Reranker:
-    """Build the reranker selected by RERANKER_TYPE."""
+# Cache reranker instances so heavy models (the local cross-encoder) load once
+# per process, not once per request. Keyed by the settings that define a backend.
+_RERANKER_CACHE: dict[tuple, Reranker] = {}
+
+
+def _build_reranker(settings: Settings) -> Reranker:
     kind = settings.reranker_type.lower()
     if kind == "none":
         return NoopReranker()
@@ -155,3 +178,16 @@ def get_reranker(settings: Settings) -> Reranker:
     if kind == "llm":
         return LLMReranker(settings.ollama_base_url, settings.local_model)
     raise ValueError(f"Unknown RERANKER_TYPE: {settings.reranker_type!r}")
+
+
+def get_reranker(settings: Settings) -> Reranker:
+    """Return the configured reranker, cached so its model loads only once."""
+    key = (
+        settings.reranker_type.lower(),
+        settings.reranker_model,
+        settings.ollama_base_url,
+        settings.local_model,
+    )
+    if key not in _RERANKER_CACHE:
+        _RERANKER_CACHE[key] = _build_reranker(settings)
+    return _RERANKER_CACHE[key]
