@@ -26,3 +26,14 @@ class CitationModel(BaseModel):
 class QueryResponse(BaseModel):
     answer: str
     citations: list[CitationModel]
+
+
+class SourceInfo(BaseModel):
+    source: str
+    chunks: int
+    ingested: str
+
+
+class DeleteResponse(BaseModel):
+    source: str
+    deleted: int

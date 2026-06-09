@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sourcerer</title>
+  <style>
+    :root {
+      --bg: #0f1115; --panel: #171a21; --border: #272b35;
+      --text: #e6e8ee; --muted: #9aa3b2; --accent: #7c9cff; --accent-2: #5a7bff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh; background: var(--bg); color: var(--text);
+      font: 16px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      display: flex; justify-content: center;
+    }
+    main { width: 100%; max-width: 760px; padding: 48px 20px 80px; }
+    header h1 { margin: 0; font-size: 28px; letter-spacing: -0.02em; }
+    header p { margin: 6px 0 28px; color: var(--muted); }
+    .accent { color: var(--accent); }
+    form { display: flex; gap: 10px; }
+    input[type=text] {
+      flex: 1; padding: 14px 16px; border-radius: 10px; border: 1px solid var(--border);
+      background: var(--panel); color: var(--text); font-size: 16px; outline: none;
+    }
+    input[type=text]:focus { border-color: var(--accent); }
+    button {
+      padding: 0 22px; border: 0; border-radius: 10px; background: var(--accent-2);
+      color: white; font-size: 15px; font-weight: 600; cursor: pointer;
+    }
+    button:disabled { opacity: 0.5; cursor: default; }
+    .examples { margin: 14px 0 0; display: flex; flex-wrap: wrap; gap: 8px; }
+    .chip {
+      font-size: 13px; color: var(--muted); background: var(--panel);
+      border: 1px solid var(--border); border-radius: 999px; padding: 5px 12px; cursor: pointer;
+    }
+    .chip:hover { color: var(--text); border-color: var(--accent); }
+    #status { margin-top: 28px; color: var(--muted); min-height: 22px; }
+    .answer {
+      margin-top: 22px; background: var(--panel); border: 1px solid var(--border);
+      border-radius: 12px; padding: 20px 22px; white-space: pre-wrap;
+    }
+    .answer.unknown { color: var(--muted); font-style: italic; }
+    h2.sub { font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em;
+      color: var(--muted); margin: 30px 0 12px; }
+    .cite {
+      background: var(--panel); border: 1px solid var(--border); border-left: 3px solid var(--accent);
+      border-radius: 8px; padding: 12px 14px; margin-bottom: 10px;
+    }
+    .cite .meta { font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+    .cite .meta b { color: var(--text); }
+    .cite .snippet { font-size: 14px; color: #c7ccd6; }
+    .badge { display: inline-block; min-width: 22px; text-align: center; background: var(--accent-2);
+      color: white; border-radius: 6px; font-size: 12px; font-weight: 700; padding: 1px 6px; margin-right: 8px; }
+    .error { color: #ff8080; }
+    .kb { margin-top: 8px; }
+    .source-row { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+      padding: 10px 14px; margin-bottom: 8px; }
+    .source-row .name { font-weight: 600; }
+    .source-row .sub2 { color: var(--muted); font-size: 13px; }
+    .del-btn { background: transparent; border: 1px solid var(--border); color: var(--muted);
+      border-radius: 8px; padding: 6px 12px; font-size: 13px; cursor: pointer; }
+    .del-btn:hover { border-color: #ff8080; color: #ff8080; }
+    .del-btn:disabled { opacity: 0.5; cursor: default; }
+    .kb-empty { color: var(--muted); font-size: 14px; }
+    footer { margin-top: 40px; color: var(--muted); font-size: 13px; }
+    footer a { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Source<span class="accent">rer</span></h1>
+      <p>Ask a question. Every answer is grounded in your documents — with sources.</p>
+    </header>
+
+    <form id="ask-form">
+      <input id="q" type="text" placeholder="e.g. What is the support SLA for Enterprise customers?"
+             autocomplete="off" autofocus />
+      <button id="submit" type="submit">Ask</button>
+    </form>
+    <div class="examples" id="examples"></div>
+
+    <div id="status"></div>
+    <div id="result"></div>
+
+    <h2 class="sub">Knowledge base</h2>
+    <div id="sources" class="kb"></div>
+
+    <footer>
+      Vector-only retrieval (Phase 1) · <a href="/docs">API docs</a>
+    </footer>
+  </main>
+
+  <script>
+    const form = document.getElementById("ask-form");
+    const input = document.getElementById("q");
+    const submitBtn = document.getElementById("submit");
+    const statusEl = document.getElementById("status");
+    const resultEl = document.getElementById("result");
+
+    const EXAMPLES = [
+      "Where are Sourcerer's offices located?",
+      "What is the support SLA for Enterprise customers?",
+      "What recall does the Lighthouse release process require?",
+    ];
+    const examplesEl = document.getElementById("examples");
+    for (const ex of EXAMPLES) {
+      const chip = document.createElement("span");
+      chip.className = "chip";
+      chip.textContent = ex;
+      chip.onclick = () => { input.value = ex; input.focus(); };
+      examplesEl.appendChild(chip);
+    }
+
+    function escapeHtml(s) {
+      return s.replace(/[&<>"']/g, c => (
+        { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+      ));
+    }
+
+    const NO_ANSWER = "I don't know based on the provided documents.";
+
+    function render(data) {
+      const isUnknown = data.answer.trim().startsWith(NO_ANSWER);
+      let html = `<div class="answer${isUnknown ? " unknown" : ""}">${escapeHtml(data.answer)}</div>`;
+
+      if (data.citations && data.citations.length) {
+        html += `<h2 class="sub">Sources</h2>`;
+        for (const c of data.citations) {
+          html += `
+            <div class="cite">
+              <div class="meta">
+                <span class="badge">${c.n}</span>
+                <b>${escapeHtml(c.source)}</b> · chunk ${c.chunk_index} · score ${c.score.toFixed(3)}
+              </div>
+              <div class="snippet">${escapeHtml(c.snippet)}</div>
+            </div>`;
+        }
+      }
+      resultEl.innerHTML = html;
+    }
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const query = input.value.trim();
+      if (!query) return;
+
+      submitBtn.disabled = true;
+      statusEl.textContent = "Retrieving and generating…";
+      resultEl.innerHTML = "";
+
+      const started = performance.now();
+      try {
+        const resp = await fetch("/query", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ query }),
+        });
+        if (!resp.ok) {
+          const text = await resp.text();
+          throw new Error(`HTTP ${resp.status}: ${text}`);
+        }
+        const data = await resp.json();
+        const secs = ((performance.now() - started) / 1000).toFixed(1);
+        statusEl.textContent = `Answered in ${secs}s`;
+        render(data);
+      } catch (err) {
+        statusEl.innerHTML = `<span class="error">${escapeHtml(err.message)}</span>`;
+      } finally {
+        submitBtn.disabled = false;
+      }
+    });
+
+    // ---- Knowledge base panel ----
+    const sourcesEl = document.getElementById("sources");
+
+    async function loadSources() {
+      try {
+        const resp = await fetch("/sources");
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const sources = await resp.json();
+        if (!sources.length) {
+          sourcesEl.innerHTML =
+            `<div class="kb-empty">No sources yet. Add files to data/raw/ and run scripts/ingest.py.</div>`;
+          return;
+        }
+        sourcesEl.innerHTML = "";
+        for (const s of sources) {
+          const row = document.createElement("div");
+          row.className = "source-row";
+
+          const left = document.createElement("div");
+          left.innerHTML =
+            `<div class="name">${escapeHtml(s.source)}</div>` +
+            `<div class="sub2">${s.chunks} chunk${s.chunks === 1 ? "" : "s"}</div>`;
+
+          const btn = document.createElement("button");
+          btn.className = "del-btn";
+          btn.textContent = "Delete";
+          btn.onclick = () => deleteSource(s.source, btn);
+
+          row.append(left, btn);
+          sourcesEl.appendChild(row);
+        }
+      } catch (err) {
+        sourcesEl.innerHTML =
+          `<div class="kb-empty">Couldn't load sources: ${escapeHtml(err.message)}</div>`;
+      }
+    }
+
+    async function deleteSource(name, btn) {
+      if (!confirm(`Delete "${name}" from the knowledge base? This removes all its chunks.`)) return;
+      btn.disabled = true;
+      btn.textContent = "Deleting…";
+      try {
+        const resp = await fetch(`/sources/${encodeURIComponent(name)}`, { method: "DELETE" });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        await loadSources();
+      } catch (err) {
+        alert(`Delete failed: ${err.message}`);
+        btn.disabled = false;
+        btn.textContent = "Delete";
+      }
+    }
+
+    loadSources();
+  </script>
+</body>
+</html>
