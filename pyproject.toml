@@ -31,6 +31,14 @@ dev = [
     "pytest",
     "pytest-asyncio",
 ]
+# Local cross-encoder reranker (bge-reranker). Heavy (pulls torch).
+rerank = [
+    "sentence-transformers",
+]
+# Cohere Rerank API backend.
+cohere = [
+    "cohere",
+]
 
 [project.scripts]
 sourcerer-ingest = "scripts.ingest:main"

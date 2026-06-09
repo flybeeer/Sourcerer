@@ -38,11 +38,23 @@ class Settings(BaseSettings):
     embedding_model: str = "bge-m3"
     embedding_dim: int = 1024
 
-    # ---------- Retrieval ----------
+    # ---------- Chunking ----------
+    chunk_strategy: str = "fixed"  # fixed | semantic
     chunk_size: int = 512  # approx words per chunk (see ingestion.chunking)
-    chunk_overlap: int = 64
+    chunk_overlap: int = 64  # used by the fixed strategy
+    semantic_threshold: float = 0.5  # similarity break point for the semantic strategy
+
+    # ---------- Retrieval ----------
+    retrieval_mode: str = "hybrid"  # hybrid | vector  (Phase 1 path kept behind this flag)
     top_k_vector: int = 20  # candidates pulled from vector search
+    top_k_bm25: int = 20  # candidates pulled from BM25/keyword search
     top_k_final: int = 5  # chunks actually passed to the model
+    rrf_k: int = 60  # reciprocal rank fusion constant
+
+    # ---------- Reranker ----------
+    reranker_type: str = "none"  # none | local | cohere  (none = keep fused order)
+    reranker_model: str = "bge-reranker-v2-m3"
+    cohere_api_key: str = ""
 
     @property
     def dsn(self) -> str:

@@ -6,7 +6,7 @@ provided sources, and say "I don't know" rather than guessing.
 
 from __future__ import annotations
 
-from sourcerer.retrieval.vector import RetrievedChunk
+from sourcerer.retrieval.types import RetrievedChunk
 
 NO_ANSWER = "I don't know based on the provided documents."
 

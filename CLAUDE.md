@@ -88,7 +88,7 @@ Update the "Current status" section below as phases complete.
 ## Current status
 
 - [x] Phase 1 — MVP (ingestion + vector retrieval + cited generation behind FastAPI POST /query)
-- [ ] Phase 2 — Hybrid retrieval
+- [x] Phase 2 — Hybrid retrieval (BM25 FTS ∥ vector → RRF → reranker; swappable chunking; vector path kept behind RETRIEVAL_MODE flag)
 - [ ] Phase 3 — Evaluation harness
 - [ ] Phase 4 — Hybrid routing
 - [ ] Phase 5 — Production polish

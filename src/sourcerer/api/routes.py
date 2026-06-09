@@ -20,7 +20,7 @@ from sourcerer.api.schemas import (
 from sourcerer.config import get_settings
 from sourcerer.generation import generator
 from sourcerer.observability import logging as query_log
-from sourcerer.retrieval import vector
+from sourcerer.retrieval import retriever
 
 router = APIRouter()
 
@@ -42,10 +42,12 @@ def health() -> dict[str, str]:
 def query(request: QueryRequest) -> QueryResponse:
     """Retrieve relevant chunks and answer the question with citations."""
     settings = get_settings()
-    top_k = request.top_k or settings.top_k_final
+    resolved_mode = (request.mode or settings.retrieval_mode).lower()
 
     started = time.perf_counter()
-    chunks = vector.search(request.query, top_k=top_k)
+    chunks = retriever.retrieve(
+        request.query, settings, mode=resolved_mode, top_k_final=request.top_k
+    )
     answer = generator.generate(request.query, chunks)
     latency_ms = int((time.perf_counter() - started) * 1000)
 
@@ -59,6 +61,7 @@ def query(request: QueryRequest) -> QueryResponse:
     return QueryResponse(
         answer=answer.text,
         citations=[CitationModel(**vars(c)) for c in answer.citations],
+        retrieval_mode=resolved_mode,
     )
 
 

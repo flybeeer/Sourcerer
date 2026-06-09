@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -12,6 +14,10 @@ class QueryRequest(BaseModel):
         ge=1,
         le=50,
         description="How many chunks to retrieve. Defaults to TOP_K_FINAL from config.",
+    )
+    mode: Literal["vector", "hybrid"] | None = Field(
+        default=None,
+        description="Retrieval mode override. Defaults to RETRIEVAL_MODE from config.",
     )
 
 
@@ -26,6 +32,7 @@ class CitationModel(BaseModel):
 class QueryResponse(BaseModel):
     answer: str
     citations: list[CitationModel]
+    retrieval_mode: str
 
 
 class SourceInfo(BaseModel):

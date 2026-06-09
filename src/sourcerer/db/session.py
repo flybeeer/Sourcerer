@@ -64,6 +64,18 @@ def init_schema() -> None:
             CREATE INDEX IF NOT EXISTS chunks_embedding_hnsw
             ON chunks USING hnsw (embedding vector_cosine_ops)
             """)
+        # Full-text search vector for BM25-style keyword retrieval (Phase 2).
+        # Generated + stored so it stays in sync with content and backfills
+        # existing rows. 'simple' config = language-agnostic tokenisation.
+        conn.execute("""
+            ALTER TABLE chunks
+            ADD COLUMN IF NOT EXISTS content_tsv tsvector
+            GENERATED ALWAYS AS (to_tsvector('simple', content)) STORED
+            """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS chunks_content_tsv_gin
+            ON chunks USING gin (content_tsv)
+            """)
         # Query log — one row per answered query (the start of observability).
         conn.execute("""
             CREATE TABLE IF NOT EXISTS query_log (

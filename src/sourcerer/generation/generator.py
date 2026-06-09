@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 from sourcerer.generation.prompts import NO_ANSWER, build_messages
 from sourcerer.llm.client import get_llm_client
-from sourcerer.retrieval.vector import RetrievedChunk
+from sourcerer.retrieval.types import RetrievedChunk
 
 _SNIPPET_CHARS = 240
 

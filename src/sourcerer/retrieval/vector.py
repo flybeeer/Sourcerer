@@ -1,26 +1,14 @@
-"""Vector-only retrieval over pgvector (Phase 1).
+"""Vector retrieval over pgvector.
 
-Cosine similarity via the `<=>` distance operator. Phase 2 adds BM25 + fusion +
-reranking alongside this; for now this is the whole retrieval story.
+Cosine similarity via the `<=>` distance operator. Used both as the Phase 1
+vector-only path and as one input to the Phase 2 hybrid pipeline.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from sourcerer.db.session import connect, to_vector_literal
 from sourcerer.ingestion.embeddings import embed_query
-
-
-@dataclass
-class RetrievedChunk:
-    """A single retrieved chunk with its similarity score."""
-
-    id: int
-    source: str
-    chunk_index: int
-    content: str
-    score: float  # cosine similarity in [−1, 1]; higher is closer
+from sourcerer.retrieval.types import RetrievedChunk
 
 
 def search(query: str, top_k: int) -> list[RetrievedChunk]:

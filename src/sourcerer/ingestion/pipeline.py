@@ -11,7 +11,7 @@ from pathlib import Path
 
 from sourcerer.config import get_settings
 from sourcerer.db.session import connect, init_schema, to_vector_literal
-from sourcerer.ingestion.chunking import chunk_text
+from sourcerer.ingestion.chunking import chunk
 from sourcerer.ingestion.embeddings import embed_texts
 from sourcerer.ingestion.loaders import iter_documents
 
@@ -32,7 +32,7 @@ def ingest_directory(root: Path) -> dict[str, int]:
     with connect() as conn:
         for path, text in iter_documents(root):
             source = path.name
-            chunks = chunk_text(text, settings.chunk_size, settings.chunk_overlap)
+            chunks = chunk(text, settings)
             if not chunks:
                 logger.warning("No chunks produced for %s; skipping", source)
                 continue
