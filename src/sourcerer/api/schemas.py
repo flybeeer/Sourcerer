@@ -19,6 +19,10 @@ class QueryRequest(BaseModel):
         default=None,
         description="Retrieval mode override. Defaults to RETRIEVAL_MODE from config.",
     )
+    rerank: bool = Field(
+        default=False,
+        description="Apply a reranker over the hybrid candidates (ignored for vector mode).",
+    )
 
 
 class CitationModel(BaseModel):

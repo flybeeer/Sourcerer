@@ -44,6 +44,14 @@ def query(request: QueryRequest) -> QueryResponse:
     settings = get_settings()
     resolved_mode = (request.mode or settings.retrieval_mode).lower()
 
+    # Optional per-request rerank: only meaningful for hybrid. Use the configured
+    # reranker, or fall back to the offline LLM reranker when none is set.
+    mode_label = resolved_mode
+    if request.rerank and resolved_mode == "hybrid":
+        rtype = settings.reranker_type if settings.reranker_type != "none" else "llm"
+        settings = settings.model_copy(update={"reranker_type": rtype})
+        mode_label = f"hybrid+rerank ({rtype})"
+
     started = time.perf_counter()
     chunks = retriever.retrieve(
         request.query, settings, mode=resolved_mode, top_k_final=request.top_k
@@ -61,7 +69,7 @@ def query(request: QueryRequest) -> QueryResponse:
     return QueryResponse(
         answer=answer.text,
         citations=[CitationModel(**vars(c)) for c in answer.citations],
-        retrieval_mode=resolved_mode,
+        retrieval_mode=mode_label,
     )
 
 

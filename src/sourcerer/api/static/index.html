@@ -102,6 +102,7 @@
       <label for="mode">Mode</label>
       <select id="mode">
         <option value="hybrid">Hybrid (vector + BM25)</option>
+        <option value="hybrid+rerank">Hybrid + rerank</option>
         <option value="vector">Vector only</option>
       </select>
       <label for="topk">top_k</label>
@@ -183,7 +184,13 @@
       statusEl.textContent = "Retrieving and generating…";
       resultEl.innerHTML = "";
 
-      const body = { query, mode: modeSelect.value };
+      const body = { query };
+      if (modeSelect.value === "hybrid+rerank") {
+        body.mode = "hybrid";
+        body.rerank = true;
+      } else {
+        body.mode = modeSelect.value;
+      }
       const topk = parseInt(topkInput.value, 10);
       if (Number.isFinite(topk)) body.top_k = topk;
 
