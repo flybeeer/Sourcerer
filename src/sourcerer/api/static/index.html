@@ -36,6 +36,12 @@
       border: 1px solid var(--border); border-radius: 999px; padding: 5px 12px; cursor: pointer;
     }
     .chip:hover { color: var(--text); border-color: var(--accent); }
+    .controls { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
+    .controls label { color: var(--muted); font-size: 13px; }
+    .controls input[type=number] { width: 84px; padding: 8px 10px; border-radius: 8px;
+      border: 1px solid var(--border); background: var(--panel); color: var(--text); font-size: 14px; }
+    .controls input[type=number]:focus { border-color: var(--accent); outline: none; }
+    .controls .hint { color: var(--muted); font-size: 12px; }
     #status { margin-top: 28px; color: var(--muted); min-height: 22px; }
     .answer {
       margin-top: 22px; background: var(--panel); border: 1px solid var(--border);
@@ -89,6 +95,12 @@
     </form>
     <div class="examples" id="examples"></div>
 
+    <div class="controls">
+      <label for="topk">Sources to retrieve (top_k)</label>
+      <input id="topk" type="number" min="1" max="50" placeholder="5" />
+      <span class="hint">leave blank for the default (5)</span>
+    </div>
+
     <div id="status"></div>
     <div id="result"></div>
 
@@ -106,6 +118,7 @@
   <script>
     const form = document.getElementById("ask-form");
     const input = document.getElementById("q");
+    const topkInput = document.getElementById("topk");
     const submitBtn = document.getElementById("submit");
     const statusEl = document.getElementById("status");
     const resultEl = document.getElementById("result");
@@ -161,12 +174,16 @@
       statusEl.textContent = "Retrieving and generating…";
       resultEl.innerHTML = "";
 
+      const body = { query };
+      const topk = parseInt(topkInput.value, 10);
+      if (Number.isFinite(topk)) body.top_k = topk;
+
       const started = performance.now();
       try {
         const resp = await fetch("/query", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ query }),
+          body: JSON.stringify(body),
         });
         if (!resp.ok) {
           const text = await resp.text();
