@@ -1,0 +1,49 @@
+# One command to run the stack: `docker-compose up`
+# Postgres (with pgvector) + Ollama + the FastAPI app.
+# Values come from .env (copy from .env.example first).
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-sourcerer}
+      POSTGRES_USER: ${POSTGRES_USER:-sourcerer}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # schema.sql runs on first init (TODO: fill in Phase 1)
+      - ./src/sourcerer/db/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sourcerer}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama:/root/.ollama
+    # Note: pull models after start, e.g. `docker exec -it <ollama> ollama pull qwen2.5:32b`
+
+  api:
+    build: .
+    env_file: .env
+    environment:
+      # override hosts so the app reaches the other containers, not localhost
+      POSTGRES_HOST: db
+      OLLAMA_BASE_URL: http://ollama:11434
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+
+volumes:
+  pgdata:
+  ollama:

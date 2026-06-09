@@ -1,0 +1,55 @@
+# ===== Secrets =====
+.env
+.env.*
+!.env.example
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*.egg
+*.egg-info/
+.eggs/
+build/
+dist/
+.Python
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Test / type / lint caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# ===== Project data & artifacts =====
+# Document corpus (keep small while iterating; don't commit it).
+# Ignore contents but keep the dir structure + guidance tracked.
+data/*
+!data/raw/
+!data/README.md
+data/raw/*
+!data/raw/.gitkeep
+
+# Generated eval tables/charts (keep the dir, ignore its contents)
+eval/results/*
+!eval/results/.gitkeep
+
+# GraphRAG indexing output at the REPO ROOT (expensive to regenerate, not source).
+# Leading slash anchors this so it does NOT match src/sourcerer/graphrag/ (package code).
+/graphrag/*
+!/graphrag/.gitkeep
+
+# Local models / caches
+*.gguf
+.ollama/
+.cache/
+
+# ===== Editor / OS =====
+.DS_Store
+.idea/
+.vscode/
+*.swp
