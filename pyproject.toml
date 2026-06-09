@@ -20,6 +20,7 @@ dependencies = [
     "httpx",
     "psycopg[binary]",
     "pgvector",
+    "pypdf",
     "numpy",
 ]
 

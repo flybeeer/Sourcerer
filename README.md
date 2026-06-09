@@ -53,13 +53,39 @@ Query → Hybrid Retrieval (vector + BM25 → RRF fusion → reranker)
 
 <!-- TODO (Phase 4): % of queries routed local, cost/latency per route, % saved vs API-for-everything. -->
 
-## Quickstart
+## Quickstart (Phase 1 — vector RAG MVP)
 
 ```bash
-cp .env.example .env        # fill in real values; .env is gitignored
-docker-compose up           # postgres+pgvector, ollama, and the API
-# TODO: ingest a corpus, then query the API
+# 1. Config
+cp .env.example .env                      # .env is gitignored; adjust if needed
+
+# 2. Start Postgres (pgvector) + Ollama
+docker-compose up -d db ollama
+
+# 3. Pull the local models into the Ollama container (first run only)
+docker compose exec ollama ollama pull bge-m3        # embeddings
+docker compose exec ollama ollama pull qwen2.5:32b   # generation (or set LOCAL_MODEL smaller)
+
+# 4. Install the package (host) and ingest your corpus
+python -m venv .venv && source .venv/bin/activate
+pip install -e .
+cp your-docs/*.pdf your-docs/*.md data/raw/         # PDF + Markdown supported
+python scripts/ingest.py                            # load → chunk → embed → store
+
+# 5. Serve the API and ask a question
+uvicorn sourcerer.api.main:app --reload
+curl -s localhost:8000/query \
+  -H 'content-type: application/json' \
+  -d '{"query": "What is X?"}' | jq
 ```
+
+The response contains an `answer` and a `citations` list (each with `source`,
+`chunk_index`, `score`, and a snippet). If the answer isn't in the corpus, the
+system returns *"I don't know based on the provided documents."* rather than guessing.
+
+> Tip: `qwen2.5:32b` is large. For a quick local test set `LOCAL_MODEL=qwen2.5:3b`
+> (or any small model) in `.env`. Alternatively run the whole stack — including the
+> API container — with `docker-compose up`.
 
 ## Project Structure
 

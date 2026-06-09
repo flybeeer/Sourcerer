@@ -13,7 +13,7 @@ services:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
-      # schema.sql runs on first init (TODO: fill in Phase 1)
+      # schema.sql runs on first init: enables the pgvector extension
       - ./src/sourcerer/db/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sourcerer}"]

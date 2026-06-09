@@ -87,7 +87,7 @@ Update the "Current status" section below as phases complete.
 
 ## Current status
 
-- [ ] Phase 1 — MVP
+- [x] Phase 1 — MVP (ingestion + vector retrieval + cited generation behind FastAPI POST /query)
 - [ ] Phase 2 — Hybrid retrieval
 - [ ] Phase 3 — Evaluation harness
 - [ ] Phase 4 — Hybrid routing
