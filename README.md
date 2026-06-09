@@ -82,28 +82,45 @@ top-k, while hybrid's keyword signal suppressed it.)
 
 ### Reranker backends: bge cross-encoder vs LLM listwise
 
-Same eval, retrieval metrics only (recall saturates, so MRR + latency tell the story):
+Four reranker backends over the same eval. **Retrieval metrics (recall/MRR/hit) are
+deterministic and trustworthy; generation metrics are not** — see the caveat below —
+so the ranking story is told by **MRR**, and the cost story by **warm rerank latency**
+(measured separately; the eval's per-query latency conflates one-time model load).
 
-| Config | Recall@5 | MRR | Hit rate | Latency ms |
-|--------|---------:|----:|---------:|-----------:|
-| hybrid (no rerank)   | 1.000 | 0.950 | 1.000 | 177 |
-| hybrid + rerank (LLM listwise, `qwen2.5:3b`) | 1.000 | 0.925 | 1.000 | 2577 |
-| hybrid + rerank (cross-encoder, `bge-reranker-v2-m3`) | 1.000 | **1.000** | 1.000 | 7922 |
+| Config | Recall@5 | MRR | Hit rate | Warm rerank latency |
+|--------|---------:|----:|---------:|--------------------:|
+| hybrid (no rerank)                              | 1.000 | 0.950 | 1.000 | — |
+| hybrid + rerank, LLM listwise (`qwen2.5:3b`)    | 1.000 | 0.925–0.950 | 1.000 | ~2.5 s |
+| hybrid + rerank, cross-encoder `bge-reranker-v2-m3` (568M) | 1.000 | **1.000** | 1.000 | 7.9 s – 36 s+ (CPU) |
+| hybrid + rerank, cross-encoder `ms-marco-MiniLM-L6-v2` (22M) | 1.000 | **1.000** | 1.000 | **13 ms** (CPU) |
 
-Two counter-intuitive, measured findings:
+Measured findings:
 
-- **A weak LLM reranker can *hurt*.** The `qwen2.5:3b` listwise reranker dropped MRR
-  **0.950 → 0.925** — sometimes demoting the relevant doc below where fusion already
-  had it. Reranking is only worth it if the reranker is actually better than your
-  first stage; "add a reranker" is not automatically a win.
-- **The cross-encoder delivers the quality** (MRR → **1.000**, relevant doc always #1)
-  — but on **CPU** the 568M `bge-reranker-v2-m3` is the *slowest* option here (≈7.9s,
-  incl. model load). The textbook "cross-encoders are cheap" holds on GPU or with a
-  smaller cross-encoder (e.g. `bge-reranker-base`); on this CPU box it is not.
+- **A weak LLM reranker can *hurt*.** The `qwen2.5:3b` listwise reranker scored MRR
+  **0.925–0.950** across runs — sometimes *below* no-rerank, demoting a doc fusion had
+  already ranked well. "Add a reranker" is not automatically a win; it must be better
+  than your first stage.
+- **A small cross-encoder is the sweet spot.** The 22M `ms-marco-MiniLM-L6-v2` matches
+  the 568M `bge-reranker-v2-m3` on ranking here (**MRR 1.000**) at **~13 ms/query** on
+  CPU — vs 7.9 s–36 s+ for bge. bge may pull ahead on a larger/harder corpus, but needs
+  a GPU to be practical (and note: Apple **MPS deadlocks** the big model on this torch
+  build — the local reranker is pinned to CPU/CUDA).
+- This is the **web UI's** "Hybrid + rerank (MiniLM)" option: rerank adds ~13 ms, so
+  end-to-end query time is unchanged — the ~15 s a query takes is entirely `qwen2.5:3b`
+  *generation*, identical across all modes.
 
-**Takeaway:** the right call for *this* setup (small corpus, CPU, 3B generator) is
-plain **hybrid** — near-perfect ranking at ~177 ms. A cross-encoder is the move once
-there's a GPU and a larger corpus where ranking precision matters more.
+> ⚠️ **Generation metrics are high-variance at this scale.** Re-running the *same*
+> judged eval moved vector-only's faithfulness from 0.90 to 0.26, and MiniLM landed at
+> 0.40 faithfulness despite the *best* retrieval — an obvious contradiction. With a
+> 10-item set and a local `qwen2.5:7b` judge, one question swings a metric by 10% and
+> judge noise dominates. **Lesson:** trust the deterministic retrieval metrics; treat
+> the LLM-judged generation numbers as directional only until the eval set grows to the
+> 50–100 items the blueprint calls for. (The harness is the deliverable; the small
+> starter set is not yet a stable generation benchmark.)
+
+**Takeaway:** for this setup, **hybrid + a small cross-encoder (MiniLM)** is the best
+balance — bge-level ranking (MRR 1.000) at negligible latency. Plain **hybrid** remains
+the safe default; the big `bge` model is for when there's a GPU.
 
 ## Hybrid Routing
 
