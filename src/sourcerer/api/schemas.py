@@ -37,3 +37,12 @@ class SourceInfo(BaseModel):
 class DeleteResponse(BaseModel):
     source: str
     deleted: int
+
+
+class HistoryItem(BaseModel):
+    id: int
+    query: str
+    answer: str
+    num_citations: int
+    latency_ms: int
+    created_at: str

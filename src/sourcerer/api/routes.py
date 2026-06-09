@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -11,12 +12,14 @@ from sourcerer import corpus
 from sourcerer.api.schemas import (
     CitationModel,
     DeleteResponse,
+    HistoryItem,
     QueryRequest,
     QueryResponse,
     SourceInfo,
 )
 from sourcerer.config import get_settings
 from sourcerer.generation import generator
+from sourcerer.observability import logging as query_log
 from sourcerer.retrieval import vector
 
 router = APIRouter()
@@ -41,13 +44,28 @@ def query(request: QueryRequest) -> QueryResponse:
     settings = get_settings()
     top_k = request.top_k or settings.top_k_final
 
+    started = time.perf_counter()
     chunks = vector.search(request.query, top_k=top_k)
     answer = generator.generate(request.query, chunks)
+    latency_ms = int((time.perf_counter() - started) * 1000)
+
+    query_log.log_query(
+        query=request.query,
+        answer=answer.text,
+        num_citations=len(answer.citations),
+        latency_ms=latency_ms,
+    )
 
     return QueryResponse(
         answer=answer.text,
         citations=[CitationModel(**vars(c)) for c in answer.citations],
     )
+
+
+@router.get("/history", response_model=list[HistoryItem])
+def history(limit: int = 20) -> list[HistoryItem]:
+    """Return recent queries, newest first."""
+    return [HistoryItem(**row) for row in query_log.recent_queries(limit=limit)]
 
 
 @router.get("/sources", response_model=list[SourceInfo])

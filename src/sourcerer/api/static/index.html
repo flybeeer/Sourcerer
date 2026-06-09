@@ -65,6 +65,12 @@
     .del-btn:hover { border-color: #ff8080; color: #ff8080; }
     .del-btn:disabled { opacity: 0.5; cursor: default; }
     .kb-empty { color: var(--muted); font-size: 14px; }
+    .hist-row { background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+      padding: 10px 14px; margin-bottom: 8px; cursor: pointer; }
+    .hist-row:hover { border-color: var(--accent); }
+    .hist-row .q { font-weight: 600; }
+    .hist-row .meta2 { color: var(--muted); font-size: 13px; margin-top: 3px; }
+    .hist-empty { color: var(--muted); font-size: 14px; }
     footer { margin-top: 40px; color: var(--muted); font-size: 13px; }
     footer a { color: var(--accent); }
   </style>
@@ -85,6 +91,9 @@
 
     <div id="status"></div>
     <div id="result"></div>
+
+    <h2 class="sub">Recent queries</h2>
+    <div id="history" class="kb"></div>
 
     <h2 class="sub">Knowledge base</h2>
     <div id="sources" class="kb"></div>
@@ -167,6 +176,7 @@
         const secs = ((performance.now() - started) / 1000).toFixed(1);
         statusEl.textContent = `Answered in ${secs}s`;
         render(data);
+        loadHistory();
       } catch (err) {
         statusEl.innerHTML = `<span class="error">${escapeHtml(err.message)}</span>`;
       } finally {
@@ -226,6 +236,42 @@
       }
     }
 
+    // ---- Recent queries panel ----
+    const historyEl = document.getElementById("history");
+
+    async function loadHistory() {
+      try {
+        const resp = await fetch("/history?limit=20");
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const items = await resp.json();
+        if (!items.length) {
+          historyEl.innerHTML = `<div class="hist-empty">No queries yet — ask something above.</div>`;
+          return;
+        }
+        historyEl.innerHTML = "";
+        for (const it of items) {
+          const row = document.createElement("div");
+          row.className = "hist-row";
+          const when = new Date(it.created_at).toLocaleString();
+          const cites = it.num_citations === 1 ? "1 citation" : `${it.num_citations} citations`;
+          row.innerHTML =
+            `<div class="q">${escapeHtml(it.query)}</div>` +
+            `<div class="meta2">${when} · ${it.latency_ms} ms · ${cites}</div>`;
+          row.title = "Click to reuse this query";
+          row.onclick = () => {
+            input.value = it.query;
+            input.focus();
+            window.scrollTo({ top: 0, behavior: "smooth" });
+          };
+          historyEl.appendChild(row);
+        }
+      } catch (err) {
+        historyEl.innerHTML =
+          `<div class="hist-empty">Couldn't load history: ${escapeHtml(err.message)}</div>`;
+      }
+    }
+
+    loadHistory();
     loadSources();
   </script>
 </body>

@@ -64,3 +64,14 @@ def init_schema() -> None:
             CREATE INDEX IF NOT EXISTS chunks_embedding_hnsw
             ON chunks USING hnsw (embedding vector_cosine_ops)
             """)
+        # Query log — one row per answered query (the start of observability).
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS query_log (
+                id              BIGSERIAL PRIMARY KEY,
+                query           TEXT        NOT NULL,
+                answer          TEXT        NOT NULL,
+                num_citations   INTEGER     NOT NULL,
+                latency_ms      INTEGER     NOT NULL,
+                created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """)
