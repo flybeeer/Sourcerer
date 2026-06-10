@@ -380,27 +380,41 @@ python scripts/graphrag_eval.py               # GraphRAG vs hybrid on overview Q
 
 ### Results — GraphRAG global vs hybrid on overview questions
 
-Built with `qwen2.5:3b` extraction over the 16-chunk corpus, judged by `qwen2.5:7b`
-(`python scripts/graphrag_eval.py`):
+Two runs over the 16-chunk corpus (`python scripts/graphrag_eval.py`), varying the
+**extraction** model; generation runs on the same model as retrieval per row
+(fair retrieval-only comparison), judged by `qwen2.5:7b`:
 
-| Approach        | Faithfulness | Answer rel. | Avg tokens | Avg latency |
-|-----------------|-------------:|------------:|-----------:|------------:|
-| hybrid RAG      | **0.900**    | **0.725**   | 4278       | 25.5 s      |
-| GraphRAG global | 0.750        | 0.325       | **812**    | **5.5 s**   |
+| Extraction | Approach        | Faithfulness | Answer rel. | Avg tokens | Avg latency |
+|------------|-----------------|-------------:|------------:|-----------:|------------:|
+| qwen2.5:3b | hybrid RAG      | 0.900        | 0.725       | 4278       | 25.5 s      |
+| qwen2.5:3b | GraphRAG global | 0.750        | 0.325       | 812        | 5.5 s       |
+| qwen2.5:7b | hybrid RAG      | 0.825        | **1.000**   | 4335       | 42.2 s      |
+| qwen2.5:7b | GraphRAG global | 0.600        | 0.800       | 3049       | 61.6 s      |
 
-**Honest finding: GraphRAG *lost* here — and that's the lesson.** On these
-whole-corpus questions hybrid scored higher on both quality metrics, while
-GraphRAG was actually *cheaper and faster*. The cause is visible in the index:
-`qwen2.5:3b` extraction fragmented 66 entities into only **4 real multi-entity
-themes** (expense, data-retention, severity, PTO) — missing security, on-call,
-offices, benefits — so the community summaries were too thin to cover the corpus.
+**Findings — three things worth a senior interview:**
 
-The takeaway isn't "GraphRAG is bad"; it's that **GraphRAG's value is gated on
-extraction quality**, and a small local extraction model undercuts it. To make
-the graph pay off you'd spend more on extraction (a 32B/frontier model → denser
-graph, more themes) — which is the real GraphRAG trade-off the literature warns
-about. Measuring it beats assuming it. (Generation metrics here are directional
-only — same `qwen2.5:7b`-judge variance noted in the eval section above.)
+1. **Extraction quality gates GraphRAG, hard.** Going 3b → 7b extraction took the
+   graph from **4 thin themes to 8 rich ones** (now covering security, onboarding,
+   offices, support — all missing before). GraphRAG's answer relevancy more than
+   doubled (**0.33 → 0.80**). The extraction model is the single biggest lever.
+
+2. **…but hybrid still wins on this corpus.** Even with the better graph, GraphRAG
+   trails hybrid on **faithfulness** (0.60 vs 0.825). Global answers are
+   synthesized from LLM-*written* community summaries — information is lost at each
+   LLM hop, so the answer sits "twice removed" from the source, while hybrid grounds
+   directly on retrieved chunks. And on 16 chunks, hybrid's top-5 already covers the
+   breadth an overview question needs.
+
+3. **GraphRAG's structural edge is for *scale*.** Its whole-corpus map-reduce pays
+   off when a corpus is too large for top-k retrieval to ever see the whole picture
+   — not a 12-doc handbook, where here it costs *more* latency for a *lower*-
+   faithfulness answer.
+
+**Verdict:** on this small corpus, **hybrid wins overview questions too**; GraphRAG
+is the right tool for a much larger corpus. The point isn't a winner — it's that the
+eval *measured* exactly where each approach wins and what it costs. (Generation
+metrics are directional: hybrid relevancy swung 0.725 → 1.000 between runs — same
+`qwen2.5:7b`-judge variance flagged in the eval section above.)
 
 ## Project Structure
 
