@@ -36,6 +36,8 @@ class Community:
     id: int
     entity_names: list[str]
     summary: str = ""
+    # Source files this community's entities were extracted from (traceability).
+    sources: list[str] = field(default_factory=list)
 
 
 @dataclass

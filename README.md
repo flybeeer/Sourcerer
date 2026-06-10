@@ -355,6 +355,9 @@ across all the docs?") — no single chunk contains the answer. GraphRAG adds a
 2. **Search** — **local** (entity-specific: match entities → gather their
    subgraph → answer) and **global** (whole-corpus: *map-reduce* over community
    summaries — score each community's relevance, then synthesize the helpful ones).
+   Each community is traced back to its **source files** (community → entities →
+   chunk origins), so a global answer cites e.g. *"community 0 · incident-severity.md,
+   offices.md, support-slas.md"* — staying true to the "answer with sources" rule.
 3. **Router extension** — when `GRAPHRAG_ENABLED=true` and a query reads as an
    overview question (markers like *"main themes / overall / across all / ภาพรวม"*),
    `/query` takes GraphRAG **global**; specific questions fall through to hybrid.

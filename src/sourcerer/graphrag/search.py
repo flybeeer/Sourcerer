@@ -66,6 +66,7 @@ class GraphCitation:
     label: str  # e.g. "community 2" or an entity name
     snippet: str
     score: float
+    sources: list[str] = field(default_factory=list)  # source files behind it
 
 
 @dataclass
@@ -243,7 +244,12 @@ def global_search(
         text=reduce.text,
         path="graph-global",
         citations=[
-            GraphCitation(label=f"community {c.id}", snippet=c.summary[:240], score=float(s))
+            GraphCitation(
+                label=f"community {c.id}",
+                snippet=c.summary[:240],
+                score=float(s),
+                sources=c.sources,
+            )
             for s, _, c in contributions
         ],
         input_tokens=in_tok + reduce.input_tokens,

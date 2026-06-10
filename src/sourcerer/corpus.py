@@ -28,6 +28,13 @@ def all_chunks() -> list[tuple[int, str]]:
     return [(r[0], r[1]) for r in rows]
 
 
+def chunk_sources() -> dict[int, str]:
+    """Map chunk id → source file name (for GraphRAG community traceability)."""
+    with connect() as conn:
+        rows = conn.execute("SELECT id, source FROM chunks").fetchall()
+    return {r[0]: r[1] for r in rows}
+
+
 def delete_source(source: str) -> int:
     """Delete all chunks for a given source. Returns the number of rows removed."""
     with connect() as conn:

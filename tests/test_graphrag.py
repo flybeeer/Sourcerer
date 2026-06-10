@@ -74,6 +74,21 @@ def test_detect_communities_empty():
     assert graph.detect_communities([], []) == []
 
 
+def test_attach_community_sources():
+    ents = [
+        Entity("Alpha", "concept", "d", chunk_ids=[1, 2]),
+        Entity("Beta", "concept", "d", chunk_ids=[3]),
+    ]
+    idx = GraphIndex(
+        entities=ents,
+        relationships=[],
+        communities=[Community(0, ["Alpha", "Beta"]), Community(1, ["Alpha"])],
+    )
+    graph.attach_community_sources(idx, {1: "a.md", 2: "b.md", 3: "c.md"})
+    assert idx.communities[0].sources == ["a.md", "b.md", "c.md"]
+    assert idx.communities[1].sources == ["a.md", "b.md"]
+
+
 # ---- overview detection (router extension) ----
 
 

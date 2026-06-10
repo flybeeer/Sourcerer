@@ -81,8 +81,15 @@ def _graph_global_query(
         ran_model, result.answer_input_tokens, result.answer_output_tokens
     )
     route_label = "api" if pricing.is_priced(ran_model) else "local"
+    # Show the source files behind each community so the answer is traceable.
     citations = [
-        CitationModel(n=i, source=c.label, chunk_index=0, score=c.score, snippet=c.snippet)
+        CitationModel(
+            n=i,
+            source=f"{c.label} · {', '.join(c.sources)}" if c.sources else c.label,
+            chunk_index=0,
+            score=c.score,
+            snippet=c.snippet,
+        )
         for i, c in enumerate(result.citations, start=1)
     ]
     answered = bool(result.citations)

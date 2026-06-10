@@ -8,7 +8,13 @@ yields a handful of communities, each a coherent topic cluster.
 
 from __future__ import annotations
 
-from sourcerer.graphrag.types import Community, Entity, Relationship, normalize_name
+from sourcerer.graphrag.types import (
+    Community,
+    Entity,
+    GraphIndex,
+    Relationship,
+    normalize_name,
+)
 
 
 def merge_entities(entities: list[Entity]) -> list[Entity]:
@@ -69,6 +75,24 @@ def detect_communities(
         if members:
             communities.append(Community(id=i, entity_names=members))
     return communities
+
+
+def attach_community_sources(index: GraphIndex, chunk_to_source: dict[int, str]) -> None:
+    """Populate each community's `sources` from its entities' chunk origins.
+
+    community → entity_names → entity.chunk_ids → chunk source file. Makes graph
+    answers traceable back to the documents they came from.
+    """
+    by_name = {normalize_name(e.name): e for e in index.entities}
+    for c in index.communities:
+        files: set[str] = set()
+        for name in c.entity_names:
+            entity = by_name.get(normalize_name(name))
+            if entity:
+                files.update(
+                    chunk_to_source[cid] for cid in entity.chunk_ids if cid in chunk_to_source
+                )
+        c.sources = sorted(files)
 
 
 def _connected_components(nodes: set[str], edges: list[tuple[str, str]]) -> list[set[str]]:

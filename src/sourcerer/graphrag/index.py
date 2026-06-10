@@ -73,5 +73,9 @@ def build_index(chunks: list[tuple[int, str]], settings: Settings) -> GraphIndex
         c.summary = summarize.summarize_community(c, by_name, all_relationships, client)
 
     index = GraphIndex(entities=entities, relationships=all_relationships, communities=communities)
+    # Traceability: link each community back to its source files.
+    from sourcerer import corpus
+
+    graph.attach_community_sources(index, corpus.chunk_sources())
     store.save(index, settings.graphrag_root)
     return index
