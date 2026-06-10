@@ -23,8 +23,19 @@ from sourcerer.llm.ollama_client import OllamaClient
 _log = logging.getLogger(__name__)
 
 
-def _extraction_client(settings: Settings) -> OllamaClient:
-    """The LOCAL model used for extraction + summaries (never the frontier API)."""
+def _extraction_client(settings: Settings):
+    """The model used for extraction + community summaries.
+
+    Local by default (blueprint: keep extraction local for cost). When
+    GRAPHRAG_EXTRACT_WITH_API is on and a key is set, use the frontier API model —
+    needed for content a small local model won't structure (e.g. Thai/OCR text it
+    summarizes in prose instead of emitting the ENTITY| format).
+    """
+    if settings.graphrag_extract_with_api and settings.anthropic_api_key:
+        from sourcerer.llm.client import get_api_client
+
+        _log.info("GraphRAG extraction using the API model: %s", settings.api_model)
+        return get_api_client(settings)
     return OllamaClient(
         base_url=settings.ollama_base_url,
         chat_model=settings.graphrag_extraction_model,

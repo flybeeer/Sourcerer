@@ -98,6 +98,12 @@ class Settings(BaseSettings):
     # ---------- GraphRAG (Phase 6, optional) ----------
     graphrag_enabled: bool = False  # parallel graph-retrieval path off by default
     graphrag_extraction_model: str = "qwen2.5:32b"  # LOCAL model for extraction (cost control)
+    # Use the frontier API model for graph extraction + summaries instead of the
+    # local model. Off by default (the blueprint says keep extraction local for
+    # cost); turn on only for content a small local model can't extract — e.g. it
+    # won't emit the structured format for Thai/garbled OCR text. Costs API tokens
+    # per chunk; keep the corpus tiny. Needs ANTHROPIC_API_KEY.
+    graphrag_extract_with_api: bool = False
     graphrag_root: str = "./graphrag"  # where graph artifacts are written/read
     graphrag_overview_eval_set: str = "eval/overview_eval_set.jsonl"
     # Send the final global-search *reduce* (synthesis) to the frontier API model

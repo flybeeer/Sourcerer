@@ -40,9 +40,13 @@ def main() -> None:
     print(f"    chunks                : {est['chunks']}")
     print(f"    extraction LLM calls  : {est['extraction_calls']}")
     print(f"    summary LLM calls(est): {est['summary_calls_est']}")
-    print(f"    TOTAL local LLM calls : ~{est['total_llm_calls_est']}")
-    print(f"    extraction model      : {settings.graphrag_extraction_model}")
-    print("    On a small CPU model this can take several minutes.\n")
+    print(f"    TOTAL LLM calls       : ~{est['total_llm_calls_est']}")
+    if settings.graphrag_extract_with_api and settings.anthropic_api_key:
+        print(f"    extraction model      : {settings.api_model}  (API — costs tokens!)")
+        print("    ⚠ Using the frontier API for extraction — this bills per chunk.\n")
+    else:
+        print(f"    extraction model      : {settings.graphrag_extraction_model}  (local)")
+        print("    On a small CPU model this can take several minutes.\n")
 
     if args.estimate:
         return

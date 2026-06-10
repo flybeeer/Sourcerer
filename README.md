@@ -432,7 +432,14 @@ by `qwen2.5:7b`. The GraphRAG rows vary the **extraction** model and where the
 1. **Extraction quality gates GraphRAG, hard.** 3b → 7b extraction took the graph
    from **4 thin themes to 8 rich ones** (now covering security, onboarding, offices,
    support — all missing before), and more than doubled relevancy (**0.33 → 0.80**).
-   The extraction model is the single biggest lever.
+   The extraction model is the single biggest lever. *Taken to the extreme:* a
+   garbled-OCR **Thai legal PDF** yielded **0 entities** with local `qwen2.5:7b` (the
+   model reads it fine but refuses to emit the structured `ENTITY|` format, reverting
+   to prose) — so it never entered the graph at all, while **hybrid answered it fine**
+   from raw chunks. Setting `GRAPHRAG_EXTRACT_WITH_API=true` (frontier model for
+   extraction only) turned that same PDF into **73 entities / 11 communities** — the
+   escape hatch for content a small local model can't structure, at a per-chunk API
+   cost. The lesson: GraphRAG has an **extraction gate** that hybrid doesn't.
 
 2. **A better *synthesizer* closes the rest of the gap.** Local-7b reduce had a
    faithfulness problem (0.60) — global answers are built from LLM-*written* community
