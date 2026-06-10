@@ -341,13 +341,75 @@ the corpus, the system returns *"I don't know based on the provided documents."*
 
 </details>
 
+## GraphRAG (Phase 6 — optional)
+
+Vector RAG can't answer **whole-corpus** questions ("what are the *main themes*
+across all the docs?") — no single chunk contains the answer. GraphRAG adds a
+**parallel retrieval path** for exactly those:
+
+1. **Indexing** (the expensive step) — the **local** model
+   (`GRAPHRAG_EXTRACTION_MODEL`, never the paid API) extracts entities +
+   relationships from every chunk; entities are merged into a graph, clustered
+   into **communities** (modularity), and each community gets an LLM-written
+   **summary**. Artifacts persist as JSON under `GRAPHRAG_ROOT`.
+2. **Search** — **local** (entity-specific: match entities → gather their
+   subgraph → answer) and **global** (whole-corpus: *map-reduce* over community
+   summaries — score each community's relevance, then synthesize the helpful ones).
+3. **Router extension** — when `GRAPHRAG_ENABLED=true` and a query reads as an
+   overview question (markers like *"main themes / overall / across all / ภาพรวม"*),
+   `/query` takes GraphRAG **global**; specific questions fall through to hybrid.
+4. **Eval** — `scripts/graphrag_eval.py` reuses the Phase 3 judge to compare
+   GraphRAG global vs hybrid on the overview eval set, reporting **quality**
+   (faithfulness, relevancy) *and* **cost** (tokens, latency).
+
+```bash
+pip install -e ".[graphrag]"                 # adds networkx
+GRAPHRAG_ENABLED=true                         # in .env
+python scripts/graphrag_index.py              # ⚠️ EXPENSIVE — prompts to confirm
+python scripts/graphrag_eval.py               # GraphRAG vs hybrid on overview Qs
+```
+
+> ⚠️ **Indexing runs the local LLM over the whole corpus** (one call per chunk +
+> one per community) — minutes on a small CPU model. The script prints an estimate
+> and asks before running. Everything is gated behind `GRAPHRAG_ENABLED` (off by
+> default), so the rest of the system is unaffected. Keep the corpus small.
+>
+> **The eval is the point:** a table showing *on which question types* GraphRAG
+> wins and what it costs is exactly the senior-level engineering judgment the
+> blueprint is after — graph coverage vs. its N+1-calls-per-query price.
+
+### Results — GraphRAG global vs hybrid on overview questions
+
+Built with `qwen2.5:3b` extraction over the 16-chunk corpus, judged by `qwen2.5:7b`
+(`python scripts/graphrag_eval.py`):
+
+| Approach        | Faithfulness | Answer rel. | Avg tokens | Avg latency |
+|-----------------|-------------:|------------:|-----------:|------------:|
+| hybrid RAG      | **0.900**    | **0.725**   | 4278       | 25.5 s      |
+| GraphRAG global | 0.750        | 0.325       | **812**    | **5.5 s**   |
+
+**Honest finding: GraphRAG *lost* here — and that's the lesson.** On these
+whole-corpus questions hybrid scored higher on both quality metrics, while
+GraphRAG was actually *cheaper and faster*. The cause is visible in the index:
+`qwen2.5:3b` extraction fragmented 66 entities into only **4 real multi-entity
+themes** (expense, data-retention, severity, PTO) — missing security, on-call,
+offices, benefits — so the community summaries were too thin to cover the corpus.
+
+The takeaway isn't "GraphRAG is bad"; it's that **GraphRAG's value is gated on
+extraction quality**, and a small local extraction model undercuts it. To make
+the graph pay off you'd spend more on extraction (a 32B/frontier model → denser
+graph, more themes) — which is the real GraphRAG trade-off the literature warns
+about. Measuring it beats assuming it. (Generation metrics here are directional
+only — same `qwen2.5:7b`-judge variance noted in the eval section above.)
+
 ## Project Structure
 
 ```
-src/sourcerer/   ingestion · retrieval · routing · generation · eval · api · llm (one client wrapper)
-eval/            eval set + generated results
+src/sourcerer/   ingestion · retrieval · routing · generation · graphrag · eval · api · llm · observability
+eval/            eval set + overview eval set + generated results
 data/            document corpus (gitignored, keep small)
-scripts/         CLI entrypoints (ingest, run_eval, route_report)
+graphrag/        GraphRAG index artifacts (JSON, generated)
+scripts/         CLI entrypoints (ingest, run_eval, route_report, graphrag_index, graphrag_eval)
 ```
 
 ## Trade-offs & Lessons
@@ -379,4 +441,4 @@ scripts/         CLI entrypoints (ingest, run_eval, route_report)
 - [x] Phase 3 — Evaluation harness ⭐ (see results above)
 - [x] Phase 4 — Hybrid routing: heuristic local-vs-API router + privacy override, per-query cost/latency/route instrumentation, savings report
 - [x] Phase 5 — Production polish: vLLM backend (swappable via `LOCAL_BACKEND`), structured per-query observability, guardrails (no-context refusal + prompt-injection screen), one-command `docker-compose`, full README
-- [ ] Phase 6 — GraphRAG (optional)
+- [x] Phase 6 — GraphRAG (optional): parallel graph path (entity/relationship extraction via local model → communities → summaries); local + global (map-reduce) search; router sends overview questions to GraphRAG global; eval compares vs hybrid on quality + cost. Gated behind `GRAPHRAG_ENABLED`.

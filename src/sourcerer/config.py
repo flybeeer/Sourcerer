@@ -95,6 +95,12 @@ class Settings(BaseSettings):
     eval_corpus_path: str = "eval/corpus"
     eval_judge_model: str = "qwen2.5:7b"  # LLM-as-judge; swap for a frontier model later
 
+    # ---------- GraphRAG (Phase 6, optional) ----------
+    graphrag_enabled: bool = False  # parallel graph-retrieval path off by default
+    graphrag_extraction_model: str = "qwen2.5:32b"  # LOCAL model for extraction (cost control)
+    graphrag_root: str = "./graphrag"  # where graph artifacts are written/read
+    graphrag_overview_eval_set: str = "eval/overview_eval_set.jsonl"
+
     @property
     def dsn(self) -> str:
         """Build the Postgres connection string from parts.

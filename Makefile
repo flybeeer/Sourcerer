@@ -1,4 +1,4 @@
-.PHONY: install fmt lint test up down ingest eval route-report
+.PHONY: install fmt lint test up down ingest eval route-report graphrag-index graphrag-eval
 
 install:        ## install package + dev tooling
 	pip install -e ".[dev]"
@@ -27,3 +27,9 @@ eval:           ## run the evaluation harness (TODO: Phase 3)
 
 route-report:   ## report local-vs-API routing split + cost savings
 	python scripts/route_report.py --simulate
+
+graphrag-index: ## build the GraphRAG index (expensive — prompts to confirm)
+	python scripts/graphrag_index.py
+
+graphrag-eval:  ## compare GraphRAG global vs hybrid on overview questions
+	python scripts/graphrag_eval.py

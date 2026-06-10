@@ -21,6 +21,8 @@ from sourcerer.api.schemas import (
 from sourcerer.config import get_settings
 from sourcerer.generation import generator, guardrails
 from sourcerer.generation.prompts import NO_ANSWER
+from sourcerer.graphrag import search as graph_search
+from sourcerer.graphrag import store as graph_store
 from sourcerer.llm import client as llm_client
 from sourcerer.observability import logging as query_log
 from sourcerer.observability import trace
@@ -44,6 +46,72 @@ def index() -> FileResponse:
 @router.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+def _graph_global_query(request: QueryRequest, settings) -> QueryResponse:
+    """Answer a whole-corpus question via GraphRAG global search (Phase 6).
+
+    Uses the local model to map-reduce over pre-computed community summaries; cost
+    is therefore local ($0). Logged and shaped like any other query response.
+    """
+    difficulty = query_router.route(request.query, settings).difficulty
+    started = time.perf_counter()
+    index = graph_store.load(settings.graphrag_root)
+    client = llm_client.get_llm_client(settings)  # graph path uses the local model
+    result = graph_search.global_search(request.query, index, client)
+    latency_ms = int((time.perf_counter() - started) * 1000)
+
+    cost_usd = pricing.estimate_cost(
+        settings.local_model, result.input_tokens, result.output_tokens
+    )
+    citations = [
+        CitationModel(n=i, source=c.label, chunk_index=0, score=c.score, snippet=c.snippet)
+        for i, c in enumerate(result.citations, start=1)
+    ]
+    reason = "overview/whole-corpus question → GraphRAG global search"
+    answered = bool(result.citations)
+
+    query_log.log_query(
+        query=request.query,
+        answer=result.text,
+        num_citations=len(citations),
+        latency_ms=latency_ms,
+        route="local",
+        model=settings.local_model,
+        input_tokens=result.input_tokens,
+        output_tokens=result.output_tokens,
+        cost_usd=cost_usd,
+        router_reason=reason,
+        difficulty=difficulty,
+    )
+    trace.log_query_event(
+        query=request.query,
+        retrieval_mode=result.path,
+        chunks=[],
+        route="local",
+        model=settings.local_model,
+        router_reason=reason,
+        difficulty=difficulty,
+        input_tokens=result.input_tokens,
+        output_tokens=result.output_tokens,
+        cost_usd=cost_usd,
+        latency_ms=latency_ms,
+        answered=answered,
+        guardrail=None if answered else "no_relevant_context",
+    )
+    return QueryResponse(
+        answer=result.text,
+        citations=citations,
+        retrieval_mode=result.path,
+        route="local",
+        model=settings.local_model,
+        router_reason=reason,
+        difficulty=difficulty,
+        input_tokens=result.input_tokens,
+        output_tokens=result.output_tokens,
+        cost_usd=cost_usd,
+        retrieval_path=result.path,
+    )
 
 
 @router.post("/query", response_model=QueryResponse)
@@ -75,6 +143,18 @@ def query(request: QueryRequest) -> QueryResponse:
                 status_code=400,
                 detail="Input rejected: it looks like a prompt-injection attempt.",
             )
+
+    # Phase 6: route overview / whole-corpus questions to the parallel GraphRAG
+    # global-search path (when enabled and an index exists); specific questions
+    # fall through to hybrid retrieval below.
+    if (
+        settings.graphrag_enabled
+        and request.route_override is None
+        and graph_search.is_overview_query(request.query)
+    ):
+        if graph_store.exists(settings.graphrag_root):
+            return _graph_global_query(request, settings)
+        _log.warning("GraphRAG: overview query but no index found; falling back to hybrid.")
 
     resolved_mode = (request.mode or settings.retrieval_mode).lower()
 

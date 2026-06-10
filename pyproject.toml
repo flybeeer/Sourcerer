@@ -43,11 +43,17 @@ cohere = [
 api = [
     "anthropic",
 ]
+# GraphRAG (Phase 6) — community detection over the entity graph.
+graphrag = [
+    "networkx",
+]
 
 [project.scripts]
 sourcerer-ingest = "scripts.ingest:main"
 sourcerer-eval = "scripts.run_eval:main"
 sourcerer-route-report = "scripts.route_report:main"
+sourcerer-graphrag-index = "scripts.graphrag_index:main"
+sourcerer-graphrag-eval = "scripts.graphrag_eval:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/sourcerer"]
