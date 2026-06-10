@@ -38,6 +38,17 @@ class Settings(BaseSettings):
     embedding_model: str = "bge-m3"
     embedding_dim: int = 1024
 
+    # ---------- Frontier API model (Phase 4 "hard query" route) ----------
+    # Talks to an Anthropic-compatible endpoint. anthropic_base_url can point at a
+    # gateway (corp proxy / vendor); leave blank to hit the public Anthropic API.
+    anthropic_api_key: str = ""
+    anthropic_base_url: str = ""
+    api_model: str = "claude-sonnet-4-6"  # see routing.pricing for the cost table
+
+    # ---------- Router (Phase 4) ----------
+    router_strategy: str = "heuristic"  # heuristic | classifier
+    router_hard_threshold: float = 0.7  # difficulty >= this routes to the API model
+
     # ---------- Chunking ----------
     chunk_strategy: str = "fixed"  # fixed | semantic
     chunk_size: int = 512  # approx words per chunk (see ingestion.chunking)

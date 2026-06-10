@@ -60,7 +60,7 @@ class Judge:
         )
 
     def _score(self, prompt: str) -> float:
-        reply = self._client.chat([{"role": "user", "content": prompt}])
+        reply = self._client.chat([{"role": "user", "content": prompt}]).text
         match = _NUMBER_RE.search(reply)
         if not match:
             return 0.0

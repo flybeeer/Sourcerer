@@ -90,7 +90,7 @@ Update the "Current status" section below as phases complete.
 - [x] Phase 1 — MVP (ingestion + vector retrieval + cited generation behind FastAPI POST /query)
 - [x] Phase 2 — Hybrid retrieval (BM25 FTS ∥ vector → RRF → reranker; swappable chunking; vector path kept behind RETRIEVAL_MODE flag)
 - [x] Phase 3 — Evaluation harness (recall@k/MRR/hit + faithfulness/answer-relevancy via LLM judge; vector vs hybrid vs hybrid+rerank table in README)
-- [ ] Phase 4 — Hybrid routing
+- [x] Phase 4 — Hybrid routing (heuristic difficulty router + privacy override → local vs frontier API; per-query route/tokens/latency/cost logged to query_log; `scripts/route_report.py` reports split + % saved vs API-only; API route via official anthropic SDK, gateway-aware base_url)
 - [ ] Phase 5 — Production polish
 - [ ] Phase 6 — GraphRAG (optional)
 

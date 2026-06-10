@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from pathlib import Path
 
@@ -19,10 +20,15 @@ from sourcerer.api.schemas import (
 )
 from sourcerer.config import get_settings
 from sourcerer.generation import generator
+from sourcerer.llm import client as llm_client
 from sourcerer.observability import logging as query_log
 from sourcerer.retrieval import retriever
+from sourcerer.routing import pricing
+from sourcerer.routing import router as query_router
 
 router = APIRouter()
+
+_log = logging.getLogger(__name__)
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -52,24 +58,65 @@ def query(request: QueryRequest) -> QueryResponse:
         settings = settings.model_copy(update={"reranker_type": rtype})
         mode_label = f"hybrid+rerank ({rtype})"
 
+    # Route the query (local vs. frontier API) before doing any work, so the
+    # rationale is logged even when the empty-context guardrail fires. The
+    # heuristic always runs (cheap, and gives a difficulty to display); a manual
+    # override from the request then wins, noting what auto would have chosen.
+    decision = query_router.route(request.query, settings)
+    override = (request.route_override or "auto").lower()
+    if override in ("local", "api") and override != decision.route:
+        forced_model = settings.api_model if override == "api" else settings.local_model
+        decision = query_router.RouteDecision(
+            route=override,
+            model=forced_model,
+            difficulty=decision.difficulty,
+            reason=f"forced to {override} by request (auto would pick {decision.route})",
+            signals=decision.signals,
+        )
+
+    if decision.route == "api" and not settings.anthropic_api_key:
+        decision = decision.as_local_fallback(
+            settings.local_model, "no ANTHROPIC_API_KEY set, fell back to local"
+        )
+    _log.info("route=%s model=%s — %s", decision.route, decision.model, decision.reason)
+
     started = time.perf_counter()
     chunks = retriever.retrieve(
         request.query, settings, mode=resolved_mode, top_k_final=request.top_k
     )
-    answer = generator.generate(request.query, chunks)
+    gen_client = llm_client.client_for(decision.route, settings)
+    answer = generator.generate(request.query, chunks, client=gen_client)
     latency_ms = int((time.perf_counter() - started) * 1000)
+
+    # Cost is keyed to the model that actually ran (local = $0; see routing.pricing).
+    ran_model = answer.model or decision.model
+    cost_usd = pricing.estimate_cost(ran_model, answer.input_tokens, answer.output_tokens)
 
     query_log.log_query(
         query=request.query,
         answer=answer.text,
         num_citations=len(answer.citations),
         latency_ms=latency_ms,
+        route=decision.route,
+        model=ran_model,
+        input_tokens=answer.input_tokens,
+        output_tokens=answer.output_tokens,
+        cost_usd=cost_usd,
+        router_reason=decision.reason,
+        difficulty=decision.difficulty,
     )
 
     return QueryResponse(
         answer=answer.text,
         citations=[CitationModel(**vars(c)) for c in answer.citations],
         retrieval_mode=mode_label,
+        route=decision.route,
+        model=ran_model,
+        router_reason=decision.reason,
+        difficulty=decision.difficulty,
+        input_tokens=answer.input_tokens,
+        output_tokens=answer.output_tokens,
+        cost_usd=cost_usd,
     )
 
 

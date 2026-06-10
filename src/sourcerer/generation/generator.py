@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sourcerer.generation.prompts import NO_ANSWER, build_messages
-from sourcerer.llm.client import get_llm_client
+from sourcerer.llm.client import LLMClient, get_llm_client
 from sourcerer.retrieval.types import RetrievedChunk
 
 _SNIPPET_CHARS = 240
@@ -30,14 +30,21 @@ class Citation:
 class Answer:
     text: str
     citations: list[Citation]
+    # Generation usage (for Phase 4 instrumentation). None model = no model call.
+    model: str | None = None
+    input_tokens: int = 0
+    output_tokens: int = 0
 
 
 def _snippet(content: str) -> str:
     return content if len(content) <= _SNIPPET_CHARS else content[:_SNIPPET_CHARS] + "…"
 
 
-def generate(query: str, chunks: list[RetrievedChunk]) -> Answer:
+def generate(query: str, chunks: list[RetrievedChunk], client: LLMClient | None = None) -> Answer:
     """Generate a grounded answer from the retrieved chunks.
+
+    `client` selects the backend (the router picks local vs. API); it defaults to
+    the local client for callers that don't route (e.g. the eval harness).
 
     If nothing was retrieved, return the "I don't know" response without calling
     the model (guardrail for the empty-context case).
@@ -45,8 +52,9 @@ def generate(query: str, chunks: list[RetrievedChunk]) -> Answer:
     if not chunks:
         return Answer(text=NO_ANSWER, citations=[])
 
+    client = client or get_llm_client()
     messages = build_messages(query, chunks)
-    text = get_llm_client().chat(messages)
+    result = client.chat(messages)
 
     citations = [
         Citation(
@@ -58,4 +66,10 @@ def generate(query: str, chunks: list[RetrievedChunk]) -> Answer:
         )
         for i, chunk in enumerate(chunks, start=1)
     ]
-    return Answer(text=text, citations=citations)
+    return Answer(
+        text=result.text,
+        citations=citations,
+        model=result.model,
+        input_tokens=result.input_tokens,
+        output_tokens=result.output_tokens,
+    )

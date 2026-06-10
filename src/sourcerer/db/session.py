@@ -87,3 +87,15 @@ def init_schema() -> None:
                 created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
             )
             """)
+        # Phase 4 routing instrumentation — added in place so existing logs keep
+        # working (NULL route marks pre-Phase-4 rows; the report skips those).
+        for ddl in (
+            "route TEXT",
+            "model TEXT",
+            "input_tokens INTEGER NOT NULL DEFAULT 0",
+            "output_tokens INTEGER NOT NULL DEFAULT 0",
+            "cost_usd DOUBLE PRECISION NOT NULL DEFAULT 0",
+            "router_reason TEXT",
+            "difficulty DOUBLE PRECISION",
+        ):
+            conn.execute(f"ALTER TABLE query_log ADD COLUMN IF NOT EXISTS {ddl}")

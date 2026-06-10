@@ -146,7 +146,7 @@ class LLMReranker:
             f"Return the numbers of the {top_k} most relevant candidates, best first, "
             "as a comma-separated list (e.g. 3,1,5). Numbers only."
         )
-        reply = self._client.chat([{"role": "user", "content": prompt}])
+        reply = self._client.chat([{"role": "user", "content": prompt}]).text
 
         order = [int(n) for n in re.findall(r"\d+", reply)]
         seen: set[int] = set()
