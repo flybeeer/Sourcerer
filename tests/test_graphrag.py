@@ -114,6 +114,32 @@ def test_global_search_map_reduce():
     assert "HR and engineering" in res.text
     assert len(res.citations) == 2
     assert res.input_tokens == 30 and res.output_tokens == 15
+    # The reduce stage's usage is tracked separately for costing.
+    assert res.answer_input_tokens == 10 and res.answer_output_tokens == 5
+    assert res.model == "fake"
+
+
+def test_global_search_reduce_uses_separate_client():
+    # Map runs on the local client; reduce runs on a distinct (API) client.
+    map_client = FakeClient(["SCORE: 80\nPOINTS: a point", "SCORE: 60\nPOINTS: another"])
+
+    class ApiClient(FakeClient):
+        pass
+
+    reduce_client = ApiClient(["synthesized answer"])
+    reduce_client._replies = ["synthesized answer"]
+    # Mark the reduce client's model so we can assert it produced the answer.
+    reduce_client.chat = lambda messages: ChatResult(
+        text="synthesized answer", model="claude-sonnet-4-6", input_tokens=99, output_tokens=7
+    )
+
+    res = search.global_search(
+        "main themes?", _index_with_two_communities(), map_client, reduce_client=reduce_client
+    )
+    assert map_client.calls == 2  # only the map calls hit the local client
+    assert res.text == "synthesized answer"
+    assert res.model == "claude-sonnet-4-6"
+    assert res.answer_input_tokens == 99 and res.answer_output_tokens == 7
 
 
 def test_global_search_no_helpful_communities():

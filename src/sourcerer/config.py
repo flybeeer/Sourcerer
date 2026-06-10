@@ -100,6 +100,10 @@ class Settings(BaseSettings):
     graphrag_extraction_model: str = "qwen2.5:32b"  # LOCAL model for extraction (cost control)
     graphrag_root: str = "./graphrag"  # where graph artifacts are written/read
     graphrag_overview_eval_set: str = "eval/overview_eval_set.jsonl"
+    # Send the final global-search *reduce* (synthesis) to the frontier API model
+    # while the many cheap map calls stay local — Phase 4 routing, inside GraphRAG.
+    # Needs ANTHROPIC_API_KEY; map + indexing remain local regardless.
+    graphrag_reduce_with_api: bool = False
 
     @property
     def dsn(self) -> str:

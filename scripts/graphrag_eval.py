@@ -23,7 +23,7 @@ from sourcerer.eval.generation_metrics import Judge
 from sourcerer.generation import generator
 from sourcerer.graphrag import search as graph_search
 from sourcerer.graphrag import store as graph_store
-from sourcerer.llm.client import get_llm_client
+from sourcerer.llm.client import get_api_client, get_llm_client
 from sourcerer.retrieval import retriever
 from sourcerer.routing.pricing import estimate_cost
 
@@ -34,46 +34,54 @@ def _hybrid(question, settings, judge):
     ans = generator.generate(question, chunks, client=get_llm_client(settings))
     latency = (time.perf_counter() - started) * 1000
     context = "\n\n".join(c.content for c in chunks)
+    cost = estimate_cost(settings.local_model, ans.input_tokens, ans.output_tokens)
     return _row(
         "hybrid RAG",
         ans.text,
         context,
-        ans.input_tokens,
-        ans.output_tokens,
+        ans.input_tokens + ans.output_tokens,
+        cost,
         latency,
-        settings,
         judge,
         question,
     )
 
 
 def _graph(question, index, settings, judge):
+    # Reduce on the API model when configured (map stays local) — matches /query.
+    reduce_client = None
+    name = "GraphRAG global"
+    if settings.graphrag_reduce_with_api and settings.anthropic_api_key:
+        reduce_client = get_api_client(settings)
+        name = "GraphRAG (API reduce)"
     started = time.perf_counter()
-    res = graph_search.global_search(question, index, get_llm_client(settings))
+    res = graph_search.global_search(
+        question, index, get_llm_client(settings), reduce_client=reduce_client
+    )
     latency = (time.perf_counter() - started) * 1000
     context = "\n\n".join(c.snippet for c in res.citations)
+    # Only the reduce (answer) stage is priced; map + indexing are local/$0.
+    cost = estimate_cost(res.model, res.answer_input_tokens, res.answer_output_tokens)
     return _row(
-        "GraphRAG global",
+        name,
         res.text,
         context,
-        res.input_tokens,
-        res.output_tokens,
+        res.input_tokens + res.output_tokens,
+        cost,
         latency,
-        settings,
         judge,
         question,
     )
 
 
-def _row(name, answer, context, in_tok, out_tok, latency, settings, judge, question):
-    cost = estimate_cost(settings.local_model, in_tok, out_tok)
+def _row(name, answer, context, tokens, cost, latency, judge, question):
     faith = judge.faithfulness(answer, context) if judge else None
     rel = judge.answer_relevancy(question, answer) if judge else None
     return {
         "approach": name,
         "faithfulness": faith,
         "answer_relevancy": rel,
-        "tokens": in_tok + out_tok,
+        "tokens": tokens,
         "cost_usd": cost,
         "latency_ms": latency,
     }

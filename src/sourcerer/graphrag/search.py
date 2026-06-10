@@ -73,8 +73,14 @@ class GraphResult:
     text: str
     path: str  # "graph-global" | "graph-local"
     citations: list[GraphCitation] = field(default_factory=list)
-    input_tokens: int = 0
+    input_tokens: int = 0  # totals across all stages (for display)
     output_tokens: int = 0
+    # The model that produced the final answer (the reduce step for global), and
+    # that stage's tokens — so the caller can cost just the priced portion (map +
+    # indexing are local/$0; only the reduce may run on the paid API model).
+    model: str = ""
+    answer_input_tokens: int = 0
+    answer_output_tokens: int = 0
 
 
 _NO_ANSWER = "I don't know based on the indexed documents."
@@ -134,6 +140,9 @@ def local_search(query: str, index: GraphIndex, client: LLMClient, top_k: int = 
         ],
         input_tokens=result.input_tokens,
         output_tokens=result.output_tokens,
+        model=result.model,
+        answer_input_tokens=result.input_tokens,
+        answer_output_tokens=result.output_tokens,
     )
 
 
@@ -189,8 +198,20 @@ def select_communities(index: GraphIndex) -> list:
     return sorted(chosen, key=lambda c: len(c.entity_names), reverse=True)[:_MAX_COMMUNITIES]
 
 
-def global_search(query: str, index: GraphIndex, client: LLMClient) -> GraphResult:
-    """Map-reduce over community summaries to answer a whole-corpus question."""
+def global_search(
+    query: str,
+    index: GraphIndex,
+    client: LLMClient,
+    reduce_client: LLMClient | None = None,
+) -> GraphResult:
+    """Map-reduce over community summaries to answer a whole-corpus question.
+
+    `client` runs the many cheap **map** calls (one per community). `reduce_client`
+    (default: `client`) runs the single **reduce** synthesis — pass the frontier
+    API client here to spend on the one call that decides answer quality while
+    keeping the map bulk local. Phase 4 routing, applied inside GraphRAG.
+    """
+    reduce_client = reduce_client or client
     communities = select_communities(index)
     if not communities:
         return GraphResult(text=_NO_ANSWER, path="graph-global")
@@ -214,11 +235,9 @@ def global_search(query: str, index: GraphIndex, client: LLMClient) -> GraphResu
 
     contributions.sort(key=lambda x: x[0], reverse=True)
     points_block = "\n".join(f"- (relevance {s}) {p}" for s, p, _ in contributions)
-    reduce = client.chat(
+    reduce = reduce_client.chat(
         [{"role": "user", "content": _REDUCE_PROMPT.format(query=query, points=points_block)}]
     )
-    in_tok += reduce.input_tokens
-    out_tok += reduce.output_tokens
 
     return GraphResult(
         text=reduce.text,
@@ -227,6 +246,9 @@ def global_search(query: str, index: GraphIndex, client: LLMClient) -> GraphResu
             GraphCitation(label=f"community {c.id}", snippet=c.summary[:240], score=float(s))
             for s, _, c in contributions
         ],
-        input_tokens=in_tok,
-        output_tokens=out_tok,
+        input_tokens=in_tok + reduce.input_tokens,
+        output_tokens=out_tok + reduce.output_tokens,
+        model=reduce.model,
+        answer_input_tokens=reduce.input_tokens,
+        answer_output_tokens=reduce.output_tokens,
     )

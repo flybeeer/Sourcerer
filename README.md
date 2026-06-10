@@ -378,6 +378,14 @@ python scripts/graphrag_eval.py               # GraphRAG vs hybrid on overview Q
 > wins and what it costs is exactly the senior-level engineering judgment the
 > blueprint is after — graph coverage vs. its N+1-calls-per-query price.
 
+**Hybrid routing *inside* GraphRAG.** Global search makes N+1 calls: N cheap
+**map** calls (score each community) + one **reduce** (synthesize the answer).
+Set `GRAPHRAG_REDUCE_WITH_API=true` to send only the reduce to the frontier API
+model while the map bulk stays local — the Phase 4 lever applied internally. In a
+live run that lifted the answer from a hedged local-7b paragraph to a clean,
+structured synthesis for **one** API call (~$0.009/query, vs ~9× if everything
+went to the API). Indexing and map always stay local.
+
 ### Results — GraphRAG global vs hybrid on overview questions
 
 Two runs over the 16-chunk corpus (`python scripts/graphrag_eval.py`), varying the

@@ -57,18 +57,30 @@ def _graph_global_query(request: QueryRequest, settings) -> QueryResponse:
     difficulty = query_router.route(request.query, settings).difficulty
     started = time.perf_counter()
     index = graph_store.load(settings.graphrag_root)
-    client = llm_client.get_llm_client(settings)  # graph path uses the local model
-    result = graph_search.global_search(request.query, index, client)
+    map_client = llm_client.get_llm_client(settings)  # cheap map calls stay local
+
+    # Optionally send only the final reduce (synthesis) to the frontier API model.
+    reduce_client = None
+    reason = "overview/whole-corpus question → GraphRAG global search"
+    if settings.graphrag_reduce_with_api and settings.anthropic_api_key:
+        reduce_client = llm_client.get_api_client(settings)
+        reason += f"; reduce via API ({settings.api_model})"
+
+    result = graph_search.global_search(
+        request.query, index, map_client, reduce_client=reduce_client
+    )
     latency_ms = int((time.perf_counter() - started) * 1000)
 
+    # Map + indexing are local ($0); only the reduce stage may be priced (API).
+    ran_model = result.model or settings.local_model
     cost_usd = pricing.estimate_cost(
-        settings.local_model, result.input_tokens, result.output_tokens
+        ran_model, result.answer_input_tokens, result.answer_output_tokens
     )
+    route_label = "api" if pricing.is_priced(ran_model) else "local"
     citations = [
         CitationModel(n=i, source=c.label, chunk_index=0, score=c.score, snippet=c.snippet)
         for i, c in enumerate(result.citations, start=1)
     ]
-    reason = "overview/whole-corpus question → GraphRAG global search"
     answered = bool(result.citations)
 
     query_log.log_query(
@@ -76,8 +88,8 @@ def _graph_global_query(request: QueryRequest, settings) -> QueryResponse:
         answer=result.text,
         num_citations=len(citations),
         latency_ms=latency_ms,
-        route="local",
-        model=settings.local_model,
+        route=route_label,
+        model=ran_model,
         input_tokens=result.input_tokens,
         output_tokens=result.output_tokens,
         cost_usd=cost_usd,
@@ -88,8 +100,8 @@ def _graph_global_query(request: QueryRequest, settings) -> QueryResponse:
         query=request.query,
         retrieval_mode=result.path,
         chunks=[],
-        route="local",
-        model=settings.local_model,
+        route=route_label,
+        model=ran_model,
         router_reason=reason,
         difficulty=difficulty,
         input_tokens=result.input_tokens,
@@ -103,8 +115,8 @@ def _graph_global_query(request: QueryRequest, settings) -> QueryResponse:
         answer=result.text,
         citations=citations,
         retrieval_mode=result.path,
-        route="local",
-        model=settings.local_model,
+        route=route_label,
+        model=ran_model,
         router_reason=reason,
         difficulty=difficulty,
         input_tokens=result.input_tokens,
