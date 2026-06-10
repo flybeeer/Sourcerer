@@ -57,3 +57,23 @@ def test_difficulty_always_in_range():
     for q in ["", "hi", "Why " * 50, "What is X? " * 10]:
         d = _R.decide(q)
         assert 0.0 <= d.difficulty <= 1.0
+
+
+def test_thai_complex_reasoning_goes_api():
+    # "Compare and explain why Sev-1 differs from Sev-3" in Thai → hard.
+    d = _R.decide("เปรียบเทียบและอธิบายว่าทำไม Sev-1 ต่างจาก Sev-3")
+    assert d.route == "api"
+    assert d.difficulty >= 0.7
+
+
+def test_thai_sensitive_stays_local():
+    # "What is the employee salary?" in Thai → privacy override.
+    d = _R.decide("เงินเดือนพนักงานเท่าไหร่")
+    assert d.route == "local"
+    assert d.signals["sensitive_hits"]
+
+
+def test_thai_word_count_is_reasonable():
+    # Thai has no spaces; the char-based estimate should still count words.
+    d = _R.decide("จำนวนวันลาขึ้นอยู่กับอะไร")
+    assert d.signals["n_words"] >= 4

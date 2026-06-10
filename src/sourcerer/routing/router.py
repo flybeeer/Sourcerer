@@ -51,6 +51,18 @@ _SENSITIVE = (
     "termination",
     "layoff",
     "lawsuit",
+    # Thai
+    "เงินเดือน",  # salary
+    "ค่าจ้าง",  # wage
+    "รหัสผ่าน",  # password
+    "บัตรประชาชน",  # national ID
+    "เลขบัตรประชาชน",  # national ID number
+    "ความลับ",  # confidential / secret
+    "ข้อมูลส่วนบุคคล",  # personal data
+    "ข้อมูลส่วนตัว",  # personal info
+    "บัญชีธนาคาร",  # bank account
+    "เลขบัญชี",  # account number
+    "เลิกจ้าง",  # termination / layoff
 )
 
 # Complex-reasoning markers → push difficulty up.
@@ -78,8 +90,25 @@ _REASONING = (
     "step by step",
     "reason about",
     "relationship between",
+    "depend on",
+    "depends on",
     "design",
     "architect",
+    # Thai
+    "ทำไม",  # why
+    "เพราะอะไร",  # why
+    "เปรียบเทียบ",  # compare
+    "อธิบาย",  # explain
+    "วิเคราะห์",  # analyze
+    "ประเมิน",  # evaluate
+    "ข้อดีข้อเสีย",  # pros and cons
+    "ข้อดีและข้อเสีย",  # pros and cons
+    "แตกต่าง",  # differ / difference
+    "ความสัมพันธ์",  # relationship
+    "ผลกระทบ",  # implication / impact
+    "สาเหตุ",  # cause / root cause
+    "ขึ้นอยู่กับ",  # depend on
+    "ออกแบบ",  # design
 )
 
 # Factual-lookup markers → easy / high-volume; pull difficulty down.
@@ -96,9 +125,30 @@ _SIMPLE = (
     "list the",
     "how many",
     "how much",
+    # Thai
+    "คืออะไร",  # what is
+    "ใคร",  # who
+    "ที่ไหน",  # where
+    "เมื่อไร",  # when
+    "เมื่อไหร่",  # when
+    "กี่",  # how many
+    "เท่าไร",  # how much
+    "เท่าไหร่",  # how much
+    "ความหมายของ",  # definition of
 )
 
-_WORD_RE = re.compile(r"\w+")
+_LATIN_WORD_RE = re.compile(r"[A-Za-z0-9]+")
+_THAI_CHAR_RE = re.compile(r"[฀-๿]")
+# Thai is scriptio continua (no spaces between words), so whitespace tokenization
+# undercounts it badly. Approximate Thai word count from character count instead.
+_THAI_CHARS_PER_WORD = 4
+
+
+def _word_count(q: str) -> int:
+    """Length signal that works for both whitespace-segmented and Thai text."""
+    latin = len(_LATIN_WORD_RE.findall(q))
+    thai = round(len(_THAI_CHAR_RE.findall(q)) / _THAI_CHARS_PER_WORD)
+    return latin + thai
 
 
 @dataclass
@@ -178,7 +228,7 @@ class HeuristicRouter:
     @staticmethod
     def _difficulty(q: str) -> tuple[float, dict]:
         """Additive, capped difficulty scorer. Returns (score in [0,1], signals)."""
-        n_words = len(_WORD_RE.findall(q))
+        n_words = _word_count(q)
         reasoning_hits = [kw for kw in _REASONING if kw in q]
         simple_hits = [kw for kw in _SIMPLE if kw in q]
         n_questions = q.count("?")
