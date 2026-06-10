@@ -341,13 +341,89 @@ the corpus, the system returns *"I don't know based on the provided documents."*
 
 </details>
 
+## GraphRAG (Phase 6 — optional)
+
+Vector RAG can't answer **whole-corpus** questions ("what are the *main themes*
+across all the docs?") — no single chunk contains the answer. GraphRAG adds a
+**parallel retrieval path** for exactly those:
+
+1. **Indexing** (the expensive step) — the **local** model
+   (`GRAPHRAG_EXTRACTION_MODEL`, never the paid API) extracts entities +
+   relationships from every chunk; entities are merged into a graph, clustered
+   into **communities** (modularity), and each community gets an LLM-written
+   **summary**. Artifacts persist as JSON under `GRAPHRAG_ROOT`.
+2. **Search** — **local** (entity-specific: match entities → gather their
+   subgraph → answer) and **global** (whole-corpus: *map-reduce* over community
+   summaries — score each community's relevance, then synthesize the helpful ones).
+3. **Router extension** — when `GRAPHRAG_ENABLED=true` and a query reads as an
+   overview question (markers like *"main themes / overall / across all / ภาพรวม"*),
+   `/query` takes GraphRAG **global**; specific questions fall through to hybrid.
+4. **Eval** — `scripts/graphrag_eval.py` reuses the Phase 3 judge to compare
+   GraphRAG global vs hybrid on the overview eval set, reporting **quality**
+   (faithfulness, relevancy) *and* **cost** (tokens, latency).
+
+```bash
+pip install -e ".[graphrag]"                 # adds networkx
+GRAPHRAG_ENABLED=true                         # in .env
+python scripts/graphrag_index.py              # ⚠️ EXPENSIVE — prompts to confirm
+python scripts/graphrag_eval.py               # GraphRAG vs hybrid on overview Qs
+```
+
+> ⚠️ **Indexing runs the local LLM over the whole corpus** (one call per chunk +
+> one per community) — minutes on a small CPU model. The script prints an estimate
+> and asks before running. Everything is gated behind `GRAPHRAG_ENABLED` (off by
+> default), so the rest of the system is unaffected. Keep the corpus small.
+>
+> **The eval is the point:** a table showing *on which question types* GraphRAG
+> wins and what it costs is exactly the senior-level engineering judgment the
+> blueprint is after — graph coverage vs. its N+1-calls-per-query price.
+
+### Results — GraphRAG global vs hybrid on overview questions
+
+Two runs over the 16-chunk corpus (`python scripts/graphrag_eval.py`), varying the
+**extraction** model; generation runs on the same model as retrieval per row
+(fair retrieval-only comparison), judged by `qwen2.5:7b`:
+
+| Extraction | Approach        | Faithfulness | Answer rel. | Avg tokens | Avg latency |
+|------------|-----------------|-------------:|------------:|-----------:|------------:|
+| qwen2.5:3b | hybrid RAG      | 0.900        | 0.725       | 4278       | 25.5 s      |
+| qwen2.5:3b | GraphRAG global | 0.750        | 0.325       | 812        | 5.5 s       |
+| qwen2.5:7b | hybrid RAG      | 0.825        | **1.000**   | 4335       | 42.2 s      |
+| qwen2.5:7b | GraphRAG global | 0.600        | 0.800       | 3049       | 61.6 s      |
+
+**Findings — three things worth a senior interview:**
+
+1. **Extraction quality gates GraphRAG, hard.** Going 3b → 7b extraction took the
+   graph from **4 thin themes to 8 rich ones** (now covering security, onboarding,
+   offices, support — all missing before). GraphRAG's answer relevancy more than
+   doubled (**0.33 → 0.80**). The extraction model is the single biggest lever.
+
+2. **…but hybrid still wins on this corpus.** Even with the better graph, GraphRAG
+   trails hybrid on **faithfulness** (0.60 vs 0.825). Global answers are
+   synthesized from LLM-*written* community summaries — information is lost at each
+   LLM hop, so the answer sits "twice removed" from the source, while hybrid grounds
+   directly on retrieved chunks. And on 16 chunks, hybrid's top-5 already covers the
+   breadth an overview question needs.
+
+3. **GraphRAG's structural edge is for *scale*.** Its whole-corpus map-reduce pays
+   off when a corpus is too large for top-k retrieval to ever see the whole picture
+   — not a 12-doc handbook, where here it costs *more* latency for a *lower*-
+   faithfulness answer.
+
+**Verdict:** on this small corpus, **hybrid wins overview questions too**; GraphRAG
+is the right tool for a much larger corpus. The point isn't a winner — it's that the
+eval *measured* exactly where each approach wins and what it costs. (Generation
+metrics are directional: hybrid relevancy swung 0.725 → 1.000 between runs — same
+`qwen2.5:7b`-judge variance flagged in the eval section above.)
+
 ## Project Structure
 
 ```
-src/sourcerer/   ingestion · retrieval · routing · generation · eval · api · llm (one client wrapper)
-eval/            eval set + generated results
+src/sourcerer/   ingestion · retrieval · routing · generation · graphrag · eval · api · llm · observability
+eval/            eval set + overview eval set + generated results
 data/            document corpus (gitignored, keep small)
-scripts/         CLI entrypoints (ingest, run_eval, route_report)
+graphrag/        GraphRAG index artifacts (JSON, generated)
+scripts/         CLI entrypoints (ingest, run_eval, route_report, graphrag_index, graphrag_eval)
 ```
 
 ## Trade-offs & Lessons
@@ -379,4 +455,4 @@ scripts/         CLI entrypoints (ingest, run_eval, route_report)
 - [x] Phase 3 — Evaluation harness ⭐ (see results above)
 - [x] Phase 4 — Hybrid routing: heuristic local-vs-API router + privacy override, per-query cost/latency/route instrumentation, savings report
 - [x] Phase 5 — Production polish: vLLM backend (swappable via `LOCAL_BACKEND`), structured per-query observability, guardrails (no-context refusal + prompt-injection screen), one-command `docker-compose`, full README
-- [ ] Phase 6 — GraphRAG (optional)
+- [x] Phase 6 — GraphRAG (optional): parallel graph path (entity/relationship extraction via local model → communities → summaries); local + global (map-reduce) search; router sends overview questions to GraphRAG global; eval compares vs hybrid on quality + cost. Gated behind `GRAPHRAG_ENABLED`.

@@ -57,3 +57,6 @@ eval/results/*
 .idea/
 .vscode/
 *.swp
+
+# GraphRAG generated index artifacts
+graphrag/graph_index.json

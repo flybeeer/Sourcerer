@@ -21,6 +21,13 @@ def list_sources() -> list[dict]:
     return [{"source": r[0], "chunks": r[1], "ingested": r[2].isoformat()} for r in rows]
 
 
+def all_chunks() -> list[tuple[int, str]]:
+    """Return (id, content) for every chunk — used by GraphRAG indexing."""
+    with connect() as conn:
+        rows = conn.execute("SELECT id, content FROM chunks ORDER BY id").fetchall()
+    return [(r[0], r[1]) for r in rows]
+
+
 def delete_source(source: str) -> int:
     """Delete all chunks for a given source. Returns the number of rows removed."""
     with connect() as conn:

@@ -41,6 +41,7 @@ class QueryResponse(BaseModel):
     answer: str
     citations: list[CitationModel]
     retrieval_mode: str
+    retrieval_path: str = "hybrid"  # "hybrid" | "graph-global" | "graph-local" (Phase 6)
     # Phase 4 routing trace
     route: str  # "local" | "api"
     model: str

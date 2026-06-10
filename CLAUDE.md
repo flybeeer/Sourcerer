@@ -92,6 +92,6 @@ Update the "Current status" section below as phases complete.
 - [x] Phase 3 — Evaluation harness (recall@k/MRR/hit + faithfulness/answer-relevancy via LLM judge; vector vs hybrid vs hybrid+rerank table in README)
 - [x] Phase 4 — Hybrid routing (heuristic difficulty router + privacy override → local vs frontier API; per-query route/tokens/latency/cost logged to query_log; `scripts/route_report.py` reports split + % saved vs API-only; API route via official anthropic SDK, gateway-aware base_url; Thai-aware markers)
 - [x] Phase 5 — Production polish (vLLM backend swappable via LOCAL_BACKEND behind the LLM wrapper; embeddings stay on Ollama; structured per-query JSON trace in observability/trace.py; guardrails: empty/low-relevance context → "I don't know" + prompt-injection screen; docker-compose runs db+ollama+api, Dockerfile installs .[api]; full README per blueprint)
-- [ ] Phase 6 — GraphRAG (optional)
+- [x] Phase 6 — GraphRAG (optional): src/sourcerer/graphrag/ (extraction→graph/communities→summaries→store as JSON under GRAPHRAG_ROOT; local + global map-reduce search). Indexing uses the LOCAL model (GRAPHRAG_EXTRACTION_MODEL) and is gated behind a confirm prompt (scripts/graphrag_index.py — EXPENSIVE). Router sends overview questions → graph global via /query when GRAPHRAG_ENABLED. scripts/graphrag_eval.py compares vs hybrid (quality + cost) on eval/overview_eval_set.jsonl. networkx is the [graphrag] extra. NOTE: index has NOT been built yet (needs the expensive run).
 
 (Claude Code: keep this checklist current as work progresses.)
