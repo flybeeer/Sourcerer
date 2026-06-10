@@ -381,6 +381,15 @@ python scripts/graphrag_eval.py               # GraphRAG vs hybrid on overview Q
 > wins and what it costs is exactly the senior-level engineering judgment the
 > blueprint is after — graph coverage vs. its N+1-calls-per-query price.
 
+**Staleness — the graph is a snapshot.** Deleting a document updates the chunk
+store (so hybrid is instantly correct) but *not* the pre-built graph, which is too
+expensive to rebuild per edit. So a global answer could cite a removed file. The
+mitigation: global search **live-filters against the current corpus** — communities
+whose every source was deleted are dropped from the map, deleted files are stripped
+from citations, and the response rationale carries a `⚠ graph index stale` note when
+drift is detected. The residual (a community summary that *blended* a deleted doc
+with a surviving one) needs a re-index to fully refresh — which the warning prompts.
+
 **Hybrid routing *inside* GraphRAG.** Global search makes N+1 calls: N cheap
 **map** calls (score each community) + one **reduce** (synthesize the answer).
 Set `GRAPHRAG_REDUCE_WITH_API=true` to send only the reduce to the frontier API

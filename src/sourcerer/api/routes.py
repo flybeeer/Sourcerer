@@ -70,8 +70,20 @@ def _graph_global_query(
     elif reduce_with_api:
         reason += "; API reduce requested but no ANTHROPIC_API_KEY, reduced locally"
 
+    # Live-filter against the current corpus so a stale index (sources deleted
+    # since indexing) doesn't answer from removed documents — and warn on drift.
+    live_sources = {s["source"] for s in corpus.list_sources()}
+    indexed_sources = {src for c in index.communities for src in c.sources}
+    stale = indexed_sources - live_sources
+    if stale:
+        reason += (
+            f"; ⚠ graph index stale — {len(stale)} source(s) deleted since indexing "
+            "(filtered out; re-index to refresh summaries)"
+        )
+        _log.warning("GraphRAG index stale; deleted sources excluded: %s", sorted(stale))
+
     result = graph_search.global_search(
-        request.query, index, map_client, reduce_client=reduce_client
+        request.query, index, map_client, reduce_client=reduce_client, live_sources=live_sources
     )
     latency_ms = int((time.perf_counter() - started) * 1000)
 

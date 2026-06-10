@@ -190,10 +190,20 @@ def _parse_map(reply: str) -> tuple[int, str]:
     return score, points
 
 
-def select_communities(index: GraphIndex) -> list:
+def select_communities(index: GraphIndex, live_sources: set[str] | None = None) -> list:
     """Pick the communities global search maps over: the largest multi-entity
-    themes, falling back to all summarized ones for tiny/fragmented graphs."""
+    themes, falling back to all summarized ones for tiny/fragmented graphs.
+
+    `live_sources` (current corpus files) drops communities whose every source has
+    been deleted since indexing — keeping a stale graph from answering from removed
+    documents without a full re-index. Communities with no recorded sources (an
+    un-enriched older index) are kept.
+    """
     summarized = [c for c in index.communities if c.summary.strip()]
+    if live_sources is not None:
+        summarized = [
+            c for c in summarized if not c.sources or any(s in live_sources for s in c.sources)
+        ]
     multi = [c for c in summarized if len(c.entity_names) >= _MIN_COMMUNITY_SIZE]
     chosen = multi or summarized
     return sorted(chosen, key=lambda c: len(c.entity_names), reverse=True)[:_MAX_COMMUNITIES]
@@ -204,6 +214,7 @@ def global_search(
     index: GraphIndex,
     client: LLMClient,
     reduce_client: LLMClient | None = None,
+    live_sources: set[str] | None = None,
 ) -> GraphResult:
     """Map-reduce over community summaries to answer a whole-corpus question.
 
@@ -211,9 +222,15 @@ def global_search(
     (default: `client`) runs the single **reduce** synthesis — pass the frontier
     API client here to spend on the one call that decides answer quality while
     keeping the map bulk local. Phase 4 routing, applied inside GraphRAG.
+
+    `live_sources` excludes communities/citation files deleted since indexing.
     """
+
+    def _live(sources: list[str]) -> list[str]:
+        return sources if live_sources is None else [s for s in sources if s in live_sources]
+
     reduce_client = reduce_client or client
-    communities = select_communities(index)
+    communities = select_communities(index, live_sources)
     if not communities:
         return GraphResult(text=_NO_ANSWER, path="graph-global")
 
@@ -248,7 +265,7 @@ def global_search(
                 label=f"community {c.id}",
                 snippet=c.summary[:240],
                 score=float(s),
-                sources=c.sources,
+                sources=_live(c.sources),
             )
             for s, _, c in contributions
         ],

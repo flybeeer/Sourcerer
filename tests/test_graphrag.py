@@ -157,6 +157,32 @@ def test_global_search_reduce_uses_separate_client():
     assert res.answer_input_tokens == 99 and res.answer_output_tokens == 7
 
 
+def test_select_communities_drops_deleted_sources():
+    idx = GraphIndex(
+        entities=[],
+        relationships=[],
+        communities=[
+            Community(0, ["A", "B"], summary="x", sources=["keep.md"]),
+            Community(1, ["C", "D"], summary="y", sources=["deleted.md"]),
+            Community(2, ["E", "F"], summary="z", sources=["keep.md", "deleted.md"]),
+        ],
+    )
+    # Only keep.md survives → community 1 (deleted-only) is dropped; 0 and 2 stay.
+    kept = search.select_communities(idx, live_sources={"keep.md"})
+    assert {c.id for c in kept} == {0, 2}
+
+
+def test_global_search_filters_deleted_source_from_citations():
+    idx = GraphIndex(
+        entities=[],
+        relationships=[],
+        communities=[Community(0, ["A", "B"], summary="theme", sources=["keep.md", "gone.md"])],
+    )
+    client = FakeClient(["SCORE: 90\nPOINTS: a point", "final answer"])
+    res = search.global_search("themes?", idx, client, live_sources={"keep.md"})
+    assert res.citations[0].sources == ["keep.md"]  # gone.md filtered out
+
+
 def test_global_search_no_helpful_communities():
     client = FakeClient(["SCORE: 0\nPOINTS: none"])
     res = search.global_search("unrelated?", _index_with_two_communities(), client)
