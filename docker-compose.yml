@@ -27,7 +27,26 @@ services:
       - "11434:11434"
     volumes:
       - ollama:/root/.ollama
-    # Note: pull models after start, e.g. `docker exec -it <ollama> ollama pull qwen2.5:32b`
+    restart: unless-stopped
+    # After start, pull the models the app needs (embeddings + generation):
+    #   docker compose exec ollama ollama pull bge-m3
+    #   docker compose exec ollama ollama pull qwen2.5:32b   (or a smaller LOCAL_MODEL)
+
+  # vLLM alternative to Ollama for higher-throughput local serving (Phase 5).
+  # Uncomment, point LOCAL_BACKEND=vllm + VLLM_BASE_URL=http://vllm:8000 in .env,
+  # and set the model. Needs an NVIDIA GPU + the container toolkit.
+  # vllm:
+  #   image: vllm/vllm-openai:latest
+  #   command: ["--model", "Qwen/Qwen2.5-3B-Instruct", "--port", "8000"]
+  #   ports:
+  #     - "8001:8000"
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: all
+  #             capabilities: [gpu]
 
   api:
     build: .
@@ -43,6 +62,7 @@ services:
         condition: service_healthy
       ollama:
         condition: service_started
+    restart: unless-stopped
 
 volumes:
   pgdata:

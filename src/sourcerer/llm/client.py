@@ -4,10 +4,11 @@ Per the project's hard rule, *all* LLM calls go through one thin wrapper so the
 backend (local Ollama, or the frontier API for the Phase 4 "hard query" route)
 is swappable without touching ingestion, retrieval, or generation code.
 
-- `get_llm_client()` — the local Ollama client. Embeddings always run here, and
-  it is the default generation backend (easy/sensitive/high-volume queries).
+- `get_embedding_client()` — embeddings always run on Ollama (bge-m3).
+- `get_llm_client()` — the local *generation* backend: Ollama (dev) or vLLM
+  (prod, OpenAI-compatible) per LOCAL_BACKEND. Default for the local route.
 - `get_api_client()` — the frontier API client for the hard-query route.
-- `client_for(route)` — pick the backend for a router decision.
+- `client_for(route)` — pick the generation backend for a router decision.
 """
 
 from __future__ import annotations
@@ -44,12 +45,29 @@ class LLMClient(Protocol):
         ...
 
 
-def get_llm_client(settings: Settings | None = None) -> LLMClient:
-    """Return the local Ollama client (embeddings + the local generation route)."""
-    # Imported lazily to avoid a circular import (ollama_client imports config).
+def get_embedding_client(settings: Settings | None = None) -> LLMClient:
+    """Return the embedding client. Embeddings always run on Ollama (bge-m3)."""
+    # Imported lazily to avoid a circular import (ollama_client imports client).
     from sourcerer.llm.ollama_client import OllamaClient
 
     settings = settings or get_settings()
+    return OllamaClient(
+        base_url=settings.ollama_base_url,
+        chat_model=settings.local_model,
+        embedding_model=settings.embedding_model,
+    )
+
+
+def get_llm_client(settings: Settings | None = None) -> LLMClient:
+    """Return the local *generation* backend: Ollama (dev) or vLLM (prod)."""
+    settings = settings or get_settings()
+    if settings.local_backend == "vllm":
+        from sourcerer.llm.vllm_client import VLLMClient
+
+        return VLLMClient(base_url=settings.vllm_base_url, model=settings.vllm_model)
+
+    from sourcerer.llm.ollama_client import OllamaClient
+
     return OllamaClient(
         base_url=settings.ollama_base_url,
         chat_model=settings.local_model,

@@ -6,14 +6,14 @@ vectors and don't care which backend produced them.
 
 from __future__ import annotations
 
-from sourcerer.llm.client import get_llm_client
+from sourcerer.llm.client import get_embedding_client
 
 
 def embed_texts(texts: list[str]) -> list[list[float]]:
     """Embed a batch of texts (used during ingestion)."""
-    return get_llm_client().embed(texts)
+    return get_embedding_client().embed(texts)
 
 
 def embed_query(text: str) -> list[float]:
     """Embed a single query string (used at retrieval time)."""
-    return get_llm_client().embed([text])[0]
+    return get_embedding_client().embed([text])[0]
