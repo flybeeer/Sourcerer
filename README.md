@@ -382,13 +382,21 @@ python scripts/graphrag_eval.py               # GraphRAG vs hybrid on overview Q
 > blueprint is after — graph coverage vs. its N+1-calls-per-query price.
 
 **Staleness — the graph is a snapshot.** Deleting a document updates the chunk
-store (so hybrid is instantly correct) but *not* the pre-built graph, which is too
-expensive to rebuild per edit. So a global answer could cite a removed file. The
-mitigation: global search **live-filters against the current corpus** — communities
-whose every source was deleted are dropped from the map, deleted files are stripped
-from citations, and the response rationale carries a `⚠ graph index stale` note when
-drift is detected. The residual (a community summary that *blended* a deleted doc
-with a surviving one) needs a re-index to fully refresh — which the warning prompts.
+store (so hybrid is instantly correct) but *not* the pre-built graph. Two layers
+handle this:
+
+- **Always on — live-filter at query time.** Global search filters communities
+  against the current corpus: communities whose every source was deleted are
+  dropped from the map, deleted files are stripped from citations, and the response
+  rationale carries a `⚠ graph index stale` note on drift. Zero cost, instant.
+- **Opt-in — rebuild on delete** (`GRAPHRAG_REINDEX_ON_DELETE=true`). Deleting a
+  source schedules a background graph rebuild that *permanently* drops communities
+  whose source files are all gone and trims deleted files from the rest — keyed on
+  **source names**, not chunk IDs (which rotate on re-ingestion, so reconciling by
+  them over-prunes — a bug worth knowing). Cheap: no re-extraction, no LLM. After
+  it runs, the graph matches the corpus (no more stale warning) and the next themes
+  take the freed slots. A *full* re-index is still needed to fold in **new** docs or
+  re-cluster from scratch.
 
 **Hybrid routing *inside* GraphRAG.** Global search makes N+1 calls: N cheap
 **map** calls (score each community) + one **reduce** (synthesize the answer).

@@ -7,6 +7,7 @@ and avoid extra schema — fine for the small corpus this extension targets.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import asdict
 from pathlib import Path
 
@@ -32,7 +33,11 @@ def save(index: GraphIndex, root: str | Path) -> Path:
         "relationships": [asdict(r) for r in index.relationships],
         "communities": [asdict(c) for c in index.communities],
     }
-    out.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    # Write atomically (temp + rename) so a concurrent reader (e.g. a query during
+    # a background rebuild) never sees a half-written file.
+    tmp = out.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(tmp, out)
     return out
 
 

@@ -6,7 +6,7 @@ import logging
 import time
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException
 from fastapi.responses import FileResponse
 
 from sourcerer import corpus
@@ -21,6 +21,7 @@ from sourcerer.api.schemas import (
 from sourcerer.config import get_settings
 from sourcerer.generation import generator, guardrails
 from sourcerer.generation.prompts import NO_ANSWER
+from sourcerer.graphrag import index as graph_index
 from sourcerer.graphrag import search as graph_search
 from sourcerer.graphrag import store as graph_store
 from sourcerer.llm import client as llm_client
@@ -312,9 +313,24 @@ def list_sources() -> list[SourceInfo]:
 
 
 @router.delete("/sources/{source}", response_model=DeleteResponse)
-def delete_source(source: str) -> DeleteResponse:
-    """Delete all chunks for a given source. 404 if the source isn't found."""
+def delete_source(source: str, background: BackgroundTasks) -> DeleteResponse:
+    """Delete all chunks for a given source. 404 if the source isn't found.
+
+    When GRAPHRAG_REINDEX_ON_DELETE is on, schedule a background graph rebuild so
+    the (snapshot) graph catches up: deleted entities pruned, communities
+    re-clustered, only changed ones re-summarized (no re-extraction).
+    """
     deleted = corpus.delete_source(source)
     if deleted == 0:
         raise HTTPException(status_code=404, detail=f"No such source: {source}")
-    return DeleteResponse(source=source, deleted=deleted)
+
+    settings = get_settings()
+    reindex = (
+        settings.graphrag_enabled
+        and settings.graphrag_reindex_on_delete
+        and graph_store.exists(settings.graphrag_root)
+    )
+    if reindex:
+        _log.info("scheduling background GraphRAG rebuild after deleting %s", source)
+        background.add_task(graph_index.rebuild_index, settings)
+    return DeleteResponse(source=source, deleted=deleted, reindex_scheduled=reindex)

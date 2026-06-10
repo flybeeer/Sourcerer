@@ -104,6 +104,11 @@ class Settings(BaseSettings):
     # while the many cheap map calls stay local — Phase 4 routing, inside GraphRAG.
     # Needs ANTHROPIC_API_KEY; map + indexing remain local regardless.
     graphrag_reduce_with_api: bool = False
+    # After a source is deleted, rebuild the graph in the background: drop
+    # communities whose source files are all gone and trim deleted files from the
+    # rest (keyed on stable source names, not rotating chunk ids). Cheap — no
+    # re-extraction, no LLM — and removes the deleted doc's themes for good.
+    graphrag_reindex_on_delete: bool = False
 
     @property
     def dsn(self) -> str:

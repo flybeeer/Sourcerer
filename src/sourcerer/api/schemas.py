@@ -65,6 +65,7 @@ class SourceInfo(BaseModel):
 class DeleteResponse(BaseModel):
     source: str
     deleted: int
+    reindex_scheduled: bool = False  # GraphRAG background rebuild kicked off (Phase 6)
 
 
 class HistoryItem(BaseModel):

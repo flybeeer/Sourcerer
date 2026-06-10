@@ -79,3 +79,30 @@ def build_index(chunks: list[tuple[int, str]], settings: Settings) -> GraphIndex
     graph.attach_community_sources(index, corpus.chunk_sources())
     store.save(index, settings.graphrag_root)
     return index
+
+
+def rebuild_index(settings: Settings) -> GraphIndex:
+    """Refresh the graph after a source deletion, keyed on **source name**.
+
+    Chunk IDs rotate on re-ingestion, so they can't be reconciled against; source
+    file names are stable. This drops any community whose every source file was
+    deleted and trims deleted files from the rest — permanently removing the
+    deleted document's themes (no query-time filtering needed) and promoting the
+    next communities into the selectable set. Cheap: no re-extraction, no LLM.
+    """
+    from sourcerer import corpus
+
+    old = store.load(settings.graphrag_root)
+    live = {s["source"] for s in corpus.list_sources()}
+    kept = []
+    for c in old.communities:
+        if c.sources and all(s not in live for s in c.sources):
+            continue  # every source deleted → drop the community
+        if c.sources:
+            c.sources = [s for s in c.sources if s in live]
+        kept.append(c)
+
+    index = GraphIndex(entities=old.entities, relationships=old.relationships, communities=kept)
+    store.save(index, settings.graphrag_root)
+    _log.info("graph rebuilt by source: %d → %d communities", len(old.communities), len(kept))
+    return index
