@@ -23,6 +23,10 @@ class QueryRequest(BaseModel):
         default=False,
         description="Apply a reranker over the hybrid candidates (ignored for vector mode).",
     )
+    route_override: Literal["auto", "local", "api"] | None = Field(
+        default=None,
+        description="Force the generation route. auto (default) lets the router decide.",
+    )
 
 
 class CitationModel(BaseModel):

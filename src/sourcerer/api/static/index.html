@@ -46,6 +46,17 @@
     .controls select:focus { border-color: var(--accent); outline: none; }
     .controls .hint { color: var(--muted); font-size: 12px; }
     #status { margin-top: 28px; color: var(--muted); min-height: 22px; }
+    .route-card { margin-top: 22px; background: var(--panel); border: 1px solid var(--border);
+      border-radius: 12px; padding: 14px 18px; }
+    .route-card .top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .rbadge { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+      border-radius: 6px; padding: 3px 9px; }
+    .rbadge.local { background: #15331f; color: #7ee2a8; border: 1px solid #2c6b45; }
+    .rbadge.api { background: #1c2350; color: #9db0ff; border: 1px solid #3a47a0; }
+    .route-card .model { font-weight: 600; }
+    .route-card .reason { color: var(--muted); font-size: 13px; margin-top: 8px; }
+    .route-card .stats { color: var(--muted); font-size: 13px; margin-top: 6px; }
+    .route-card .stats b { color: var(--text); }
     .answer {
       margin-top: 22px; background: var(--panel); border: 1px solid var(--border);
       border-radius: 12px; padding: 20px 22px; white-space: pre-wrap;
@@ -105,6 +116,12 @@
         <option value="hybrid+rerank">Hybrid + rerank (MiniLM)</option>
         <option value="vector">Vector only</option>
       </select>
+      <label for="route">Route</label>
+      <select id="route">
+        <option value="auto">Auto (router decides)</option>
+        <option value="local">Local LLM</option>
+        <option value="api">API model</option>
+      </select>
       <label for="topk">top_k</label>
       <input id="topk" type="number" min="1" max="50" placeholder="5" />
       <span class="hint">top_k blank = default (5)</span>
@@ -120,7 +137,7 @@
     <div id="sources" class="kb"></div>
 
     <footer>
-      Hybrid retrieval: vector + BM25 → RRF → rerank (Phase 2) · <a href="/docs">API docs</a>
+      Hybrid retrieval (Phase 2) · hybrid routing local↔API (Phase 4) · <a href="/docs">API docs</a>
     </footer>
   </main>
 
@@ -128,6 +145,7 @@
     const form = document.getElementById("ask-form");
     const input = document.getElementById("q");
     const modeSelect = document.getElementById("mode");
+    const routeSelect = document.getElementById("route");
     const topkInput = document.getElementById("topk");
     const submitBtn = document.getElementById("submit");
     const statusEl = document.getElementById("status");
@@ -135,8 +153,8 @@
 
     const EXAMPLES = [
       "Where are Sourcerer's offices located?",
-      "What is the support SLA for Enterprise customers?",
-      "What recall does the Lighthouse release process require?",
+      "Compare incident severity levels and explain why a Sev-1 is handled differently than a Sev-3.",
+      "What is the on-call salary stipend?",
     ];
     const examplesEl = document.getElementById("examples");
     for (const ex of EXAMPLES) {
@@ -157,7 +175,26 @@
 
     function render(data) {
       const isUnknown = data.answer.trim().startsWith(NO_ANSWER);
-      let html = `<div class="answer${isUnknown ? " unknown" : ""}">${escapeHtml(data.answer)}</div>`;
+
+      // Phase 4 routing trace — show where the query went and why.
+      let html = "";
+      if (data.route) {
+        const routeClass = data.route === "api" ? "api" : "local";
+        const cost = data.cost_usd ? `$${data.cost_usd.toFixed(5)}` : "$0 (local)";
+        const diff = (data.difficulty ?? 0).toFixed(2);
+        html += `
+          <div class="route-card">
+            <div class="top">
+              <span class="rbadge ${routeClass}">${escapeHtml(data.route)}</span>
+              <span class="model">${escapeHtml(data.model || "")}</span>
+            </div>
+            <div class="reason">${escapeHtml(data.router_reason || "")}</div>
+            <div class="stats">difficulty <b>${diff}</b> · tokens
+              <b>${data.input_tokens}/${data.output_tokens}</b> in/out · est. cost <b>${cost}</b></div>
+          </div>`;
+      }
+
+      html += `<div class="answer${isUnknown ? " unknown" : ""}">${escapeHtml(data.answer)}</div>`;
 
       if (data.citations && data.citations.length) {
         html += `<h2 class="sub">Sources</h2>`;
@@ -193,6 +230,7 @@
       }
       const topk = parseInt(topkInput.value, 10);
       if (Number.isFinite(topk)) body.top_k = topk;
+      if (routeSelect.value !== "auto") body.route_override = routeSelect.value;
 
       const started = performance.now();
       try {
@@ -287,9 +325,11 @@
           row.className = "hist-row";
           const when = new Date(it.created_at).toLocaleString();
           const cites = it.num_citations === 1 ? "1 citation" : `${it.num_citations} citations`;
+          const route = it.route ? ` · ${it.route}` : "";
+          const cost = it.cost_usd ? ` · $${it.cost_usd.toFixed(4)}` : "";
           row.innerHTML =
             `<div class="q">${escapeHtml(it.query)}</div>` +
-            `<div class="meta2">${when} · ${it.latency_ms} ms · ${cites}</div>`;
+            `<div class="meta2">${when} · ${it.latency_ms} ms · ${cites}${route}${cost}</div>`;
           row.title = "Click to reuse this query";
           row.onclick = () => {
             input.value = it.query;

@@ -188,7 +188,7 @@ class HeuristicRouter:
         # suggestive, but several distinct ones (analyze + evaluate + compare …)
         # are enough to route on their own, even for a short query.
         if reasoning_hits:
-            score += min(0.7, 0.4 + 0.12 * (len(reasoning_hits) - 1))
+            score += min(0.7, 0.4 + 0.15 * (len(reasoning_hits) - 1))
         # Long queries tend to be harder / multi-faceted.
         if n_words >= 40:
             score += 0.3

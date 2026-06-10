@@ -59,8 +59,21 @@ def query(request: QueryRequest) -> QueryResponse:
         mode_label = f"hybrid+rerank ({rtype})"
 
     # Route the query (local vs. frontier API) before doing any work, so the
-    # rationale is logged even when the empty-context guardrail fires.
+    # rationale is logged even when the empty-context guardrail fires. The
+    # heuristic always runs (cheap, and gives a difficulty to display); a manual
+    # override from the request then wins, noting what auto would have chosen.
     decision = query_router.route(request.query, settings)
+    override = (request.route_override or "auto").lower()
+    if override in ("local", "api") and override != decision.route:
+        forced_model = settings.api_model if override == "api" else settings.local_model
+        decision = query_router.RouteDecision(
+            route=override,
+            model=forced_model,
+            difficulty=decision.difficulty,
+            reason=f"forced to {override} by request (auto would pick {decision.route})",
+            signals=decision.signals,
+        )
+
     if decision.route == "api" and not settings.anthropic_api_key:
         decision = decision.as_local_fallback(
             settings.local_model, "no ANTHROPIC_API_KEY set, fell back to local"
