@@ -386,6 +386,14 @@ live run that lifted the answer from a hedged local-7b paragraph to a clean,
 structured synthesis for **one** API call (~$0.009/query, vs ~9× if everything
 went to the API). Indexing and map always stay local.
 
+The web UI's **Route** selector exposes this directly — pick **GraphRAG (local
+reduce)** or **GraphRAG (API reduce)** to force the graph path and choose the
+reduce backend on the same query (great for A/B-ing the two). The API equivalents
+are `route_override: "graph-local"` / `"graph-api"` on `POST /query`. Requesting
+the graph path with no index returns HTTP 400; `graph-api` with no key falls back
+to a local reduce (noted in the response rationale). Otherwise **Auto** routes
+overview questions to the graph automatically.
+
 ### Results — GraphRAG global vs hybrid on overview questions
 
 Four configs over the 16-chunk corpus (`python scripts/graphrag_eval.py`), judged
