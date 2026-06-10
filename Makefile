@@ -1,4 +1,4 @@
-.PHONY: install fmt lint test up down ingest eval
+.PHONY: install fmt lint test up down ingest eval route-report
 
 install:        ## install package + dev tooling
 	pip install -e ".[dev]"
@@ -24,3 +24,6 @@ ingest:         ## ingest the corpus (TODO: Phase 1)
 
 eval:           ## run the evaluation harness (TODO: Phase 3)
 	python scripts/run_eval.py
+
+route-report:   ## report local-vs-API routing split + cost savings
+	python scripts/route_report.py --simulate

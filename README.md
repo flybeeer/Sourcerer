@@ -124,7 +124,46 @@ the safe default; the big `bge` model is for when there's a GPU.
 
 ## Hybrid Routing
 
-<!-- TODO (Phase 4): % of queries routed local, cost/latency per route, % saved vs API-for-everything. -->
+A per-query **router** decides where each question is answered:
+
+- **local model** (Ollama) — easy / high-volume lookups *and* anything **sensitive**.
+- **frontier API model** (Anthropic Messages API, direct or via a gateway) — **hard,
+  complex-reasoning** queries that justify the cost.
+
+The default `ROUTER_STRATEGY=heuristic` is a transparent difficulty scorer (complex-reasoning
+markers, query length, multi-part structure) gated by `ROUTER_HARD_THRESHOLD`. A **privacy
+override** keeps any sensitive query (salary, PII, NDA, credentials …) on the local model
+*regardless* of difficulty — the kind of trade-off a real org cares about. Every decision logs
+its rationale and is returned in the API response (`route`, `model`, `router_reason`,
+`difficulty`, tokens, `cost_usd`), so routing is fully inspectable.
+
+Each query is instrumented (route, tokens, latency, estimated cost) into `query_log`.
+`scripts/route_report.py` aggregates that — or runs offline over a built-in query set
+(`--simulate`) for a reproducible number:
+
+```
+$ python scripts/route_report.py --simulate     # also: make route-report
+
+  [local] What is the company's PTO policy?                  → easy/high-volume (0.00 < 0.70)
+  [local] What is the employee salary band …?                → sensitive 'salary' (privacy override)
+  [  api] Compare the trade-offs between on-prem and cloud …  → hard (0.79 ≥ 0.70; compare, trade-off, why)
+  …
+```
+
+| Metric                                   | Value                          |
+|------------------------------------------|--------------------------------|
+| Queries                                  | 12 (representative mix)        |
+| Routed **local** / **API**               | **9 (75%)** / 3 (25%)          |
+| Cost per query (actual)                  | **$0.00129**                   |
+| Cost per query (API-only baseline)       | $0.00514                       |
+| **Saved vs API-for-everything**          | **≈ 75%**                      |
+
+> The `--simulate` cost is a *projection*: routing is real (deterministic heuristics), but
+> token counts use fixed per-query assumptions (see the script) since no generation runs. The
+> savings track the industry-cited 40–70% range. Live numbers come from the same report without
+> `--simulate`, aggregating real `query_log` rows. The API route uses the official `anthropic`
+> SDK; install it with `pip install -e ".[api]"` and set `ANTHROPIC_API_KEY` (and optionally
+> `ANTHROPIC_BASE_URL` for a gateway).
 
 ## Quickstart (Phase 1 — vector RAG MVP)
 
@@ -166,18 +205,31 @@ system returns *"I don't know based on the provided documents."* rather than gue
 src/sourcerer/   ingestion · retrieval · routing · generation · eval · api · llm (one client wrapper)
 eval/            eval set + generated results
 data/            document corpus (gitignored, keep small)
-scripts/         CLI entrypoints (ingest, run_eval)
+scripts/         CLI entrypoints (ingest, run_eval, route_report)
 ```
 
 ## Trade-offs & Lessons
 
-<!-- TODO: what didn't work and how you fixed it (chunking, context size, "no answer" handling). -->
+- **Routing saves money, not always latency.** In a live run the local model
+  (`qwen2.5:3b`, CPU) took ~59 s while the frontier API (Sonnet via gateway) answered
+  the *harder* query in ~21 s. The cost story still holds ($0 vs ~$0.06/query), but
+  "route easy traffic local" is a **cost/privacy** lever — latency depends entirely on
+  local hardware. On a GPU (or vLLM, Phase 5) the local path gets competitive; on CPU it
+  doesn't. The router instruments both so the trade-off is measured, not assumed.
+- **Privacy beats difficulty in routing.** A sensitive query (salary, PII, NDA) is kept
+  local even when it scores as "hard" — the opposite of a pure cost-optimiser. That
+  ordering is the realistic enterprise default and is enforced before the difficulty gate.
+- **Tune heuristics against real queries.** The first live hard query routed *local*
+  because the difficulty list was missing the verb **"explain"** — an obvious
+  complex-reasoning marker. Live testing (not unit tests) surfaced it; adding it fixed the
+  route. Transparent, list-based heuristics make gaps like this debuggable from one logged
+  rationale line.
 
 ## Roadmap / Phase Status
 
 - [x] Phase 1 — MVP: ingestion + vector retrieval + cited generation behind FastAPI
 - [x] Phase 2 — Hybrid retrieval: BM25 + RRF + reranker + swappable chunking
 - [x] Phase 3 — Evaluation harness ⭐ (see results above)
-- [ ] Phase 4 — Hybrid routing
+- [x] Phase 4 — Hybrid routing: heuristic local-vs-API router + privacy override, per-query cost/latency/route instrumentation, savings report
 - [ ] Phase 5 — Production polish (vLLM, observability, guardrails, docker)
 - [ ] Phase 6 — GraphRAG (optional)

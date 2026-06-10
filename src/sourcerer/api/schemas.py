@@ -37,6 +37,14 @@ class QueryResponse(BaseModel):
     answer: str
     citations: list[CitationModel]
     retrieval_mode: str
+    # Phase 4 routing trace
+    route: str  # "local" | "api"
+    model: str
+    router_reason: str
+    difficulty: float
+    input_tokens: int
+    output_tokens: int
+    cost_usd: float
 
 
 class SourceInfo(BaseModel):
@@ -57,3 +65,10 @@ class HistoryItem(BaseModel):
     num_citations: int
     latency_ms: int
     created_at: str
+    route: str | None = None
+    model: str | None = None
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cost_usd: float = 0.0
+    router_reason: str | None = None
+    difficulty: float | None = None
