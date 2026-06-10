@@ -7,42 +7,87 @@
 
 ## Demo
 
-<!-- TODO: a short GIF/video showing a question → cited answer in the first 10 seconds -->
+Ask a question in the web UI (`http://localhost:8000`) → get a grounded answer
+with numbered citations, plus a **routing-trace card** showing which model
+answered, why, and what it cost:
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  Q: Compare incident severity levels and explain why a Sev-1  │
+│     is handled differently than a Sev-3.                      │
+├──────────────────────────────────────────────────────────────┤
+│  [API] claude-sonnet-4-6                                      │
+│  hard query (difficulty 0.79 ≥ 0.70; drivers: compare,       │
+│  explain, why) → API route                                   │
+│  difficulty 0.79 · tokens 18413/497 · est. cost $0.0627      │
+├──────────────────────────────────────────────────────────────┤
+│  Sev-1 is a full outage / data-loss risk [1], so it is       │
+│  escalated immediately to the primary on-call [3]; Sev-3 …    │
+│  Sources: [1] incident-severity.md  [3] on-call.md           │
+└──────────────────────────────────────────────────────────────┘
+```
+
+<!-- TODO: replace the mockup with a real GIF once recorded. -->
 
 ## The Problem
 
-<!-- TODO: "Answers questions from internal docs X that plain ChatGPT can't." Name the corpus. -->
+Plain ChatGPT can't answer questions about *your* internal documents — and when
+it tries, it guesses. Sourcerer answers strictly from an indexed corpus (the demo
+ships a synthetic company handbook in `eval/corpus/`: PTO, on-call, incident
+severity, SLAs, security policy…) and **cites every claim** or says *"I don't
+know"*. Swap in your own PDFs/Markdown via `scripts/ingest.py`.
 
 ## What Makes It Stand Out
 
 1. **Hybrid retrieval** — vector (pgvector) + keyword (BM25) → RRF fusion → reranker, not vector search alone.
 2. **Evaluation harness** — measurable proof the system works (recall@k, MRR, faithfulness), not "looks fine to me".
-3. **Hybrid routing** — easy/sensitive/high-volume queries → local LLM; hard queries → frontier API.
+3. **Hybrid routing** — easy/sensitive/high-volume queries → local LLM; hard queries → frontier API, with measured cost savings.
 
 ## Architecture
 
-<!-- TODO: architecture diagram -->
-
 ```
-Documents → Ingestion (chunk + embed + index)
-Query → Hybrid Retrieval (vector + BM25 → RRF fusion → reranker)
-      → Router (simple/sensitive → local LLM; hard → API)
-      → Generation with citations
-      → Eval harness + logging/observability
+                 ┌──────────────────────────────────────────────┐
+  Documents ───▶ │  Ingestion:  load → chunk → embed (bge-m3)    │
+ (PDF / MD)      │              → store in pgvector + FTS index  │
+                 └───────────────────────┬──────────────────────┘
+                                         ▼
+                 ┌──────────────────────────────────────────────┐
+  Query ───────▶ │  Guardrail: prompt-injection screen          │
+                 ├──────────────────────────────────────────────┤
+                 │  Hybrid Retrieval                            │
+                 │    vector (pgvector)  ∥  BM25 (Postgres FTS) │
+                 │        └──── RRF fusion ────┘ → reranker      │
+                 ├──────────────────────────────────────────────┤
+                 │  Guardrail: relevant context? else "I don't  │
+                 │             know" (no guessing)              │
+                 ├──────────────────────────────────────────────┤
+                 │  Router:  easy/sensitive → local LLM         │
+                 │           hard/complex   → frontier API      │
+                 ├──────────────────────────────────────────────┤
+                 │  Generation with inline [n] citations        │
+                 └───────────────────────┬──────────────────────┘
+                                         ▼
+                 ┌──────────────────────────────────────────────┐
+                 │  Observability: structured per-query trace   │
+                 │  (retrieval · route · tokens · latency · $)  │
+                 │  + query_log table  ·  Eval harness          │
+                 └──────────────────────────────────────────────┘
+
+  Inference behind one LLM client wrapper:  Ollama (dev) ⇄ vLLM (prod) · frontier API
 ```
 
 ### Technology choices (and why)
 
 | Layer            | Choice                          | Why |
 |------------------|---------------------------------|-----|
-| Local inference  | Ollama (dev) → vLLM (prod)      | <!-- TODO --> |
-| Local model      | Qwen 2.5 32B / Llama 3.x (INT4) | <!-- TODO --> |
-| API model        | Frontier API (hard-query route) | <!-- TODO --> |
-| Vector DB        | pgvector                        | <!-- TODO --> |
-| Keyword search   | BM25 (Postgres FTS)             | <!-- TODO --> |
-| Reranker         | bge-reranker / Cohere           | <!-- TODO --> |
-| Embeddings       | bge-m3                          | <!-- TODO --> |
-| Backend          | FastAPI                         | <!-- TODO --> |
+| Local inference  | Ollama (dev) → vLLM (prod)      | Ollama is one-command to run locally; vLLM's continuous batching wins on throughput in prod. One wrapper, swap via `LOCAL_BACKEND`. |
+| Local model      | Qwen 2.5 (INT4)                 | Strong open weights at a "local-grade" size; INT4 fits commodity hardware. Dev uses `qwen2.5:3b` for speed. |
+| API model        | Anthropic Sonnet (gateway-aware)| Frontier quality for the hard-query route; reached via the official SDK + optional `ANTHROPIC_BASE_URL` so a corp gateway works. |
+| Vector DB        | pgvector                        | Vectors + BM25 (FTS) + the query log in **one** Postgres — no extra infra to operate. |
+| Keyword search   | BM25 (Postgres FTS)             | The keyword half of hybrid; a generated `tsvector` column stays in sync with content. Catches exact terms vectors miss. |
+| Reranker         | cross-encoder / LLM listwise    | Re-scores fused candidates before generation. Small MiniLM cross-encoder is ~13 ms/query and matches the 568M bge here (see eval). |
+| Embeddings       | bge-m3                          | Strong multilingual local embeddings; keeps the whole retrieval stack self-hosted and on-theme. |
+| Backend          | FastAPI                         | Async Python standard for serving; auto OpenAPI docs at `/docs`. |
 
 ## Evaluation Results ⭐
 
@@ -165,7 +210,107 @@ $ python scripts/route_report.py --simulate     # also: make route-report
 > SDK; install it with `pip install -e ".[api]"` and set `ANTHROPIC_API_KEY` (and optionally
 > `ANTHROPIC_BASE_URL` for a gateway).
 
-## Quickstart (Phase 1 — vector RAG MVP)
+The router also recognizes **Thai** (markers + character-based length), so Thai
+queries route on meaning, not just whitespace — e.g. *"เปรียบเทียบและอธิบายว่าทำไม…"* → API.
+
+## Guardrails
+
+The system is built to **refuse rather than guess**:
+
+- **No relevant context → "I don't know".** Empty retrieval never reaches the
+  model — the generator returns *"I don't know based on the provided documents."*
+  The system prompt also hard-requires answering only from the numbered sources.
+  An optional `MIN_RELEVANCE_SCORE` floor (applied to cross-encoder rerank scores,
+  which are calibrated) drops weakly-relevant chunks so a confident-but-off-topic
+  top hit doesn't get answered. *(In a live trace, the relevant chunk scored
+  `4.75` while the rest scored `-9.x` — exactly what the floor filters.)*
+- **Prompt-injection screening.** Inputs are checked against a transparent
+  denylist ("ignore previous instructions", "reveal your system prompt",
+  jailbreak/DAN, Thai equivalents…). A match returns HTTP 400 and is logged — a
+  deliberately simple *first* layer, not a complete defense.
+
+## Observability
+
+Every query emits a **structured JSON trace** on the `sourcerer.query` logger —
+the machine-readable companion to the `query_log` table:
+
+```json
+{"event": "query", "query": "Where are the offices located?",
+ "retrieval_mode": "hybrid", "num_retrieved": 5,
+ "retrieved": [{"source": "offices.md", "chunk_index": 0, "score": 4.7551}, …],
+ "route": "local", "model": "qwen2.5:3b", "difficulty": 0.0,
+ "input_tokens": 4095, "output_tokens": 40, "cost_usd": 0.0,
+ "latency_ms": 37435, "answered": true, "guardrail": null}
+```
+
+Pipe stdout to any log collector and the retrieval trace, route, tokens, latency,
+and cost are all queryable. The same fields persist to Postgres (`query_log`),
+which the routing report and the `/history` endpoint read.
+
+## Local serving: Ollama → vLLM
+
+Both local backends sit behind one `chat()` wrapper, so switching is config-only:
+
+```bash
+# dev (default): Ollama
+LOCAL_BACKEND=ollama
+
+# prod: vLLM (OpenAI-compatible, continuous batching)
+python -m vllm.entrypoints.openai.api_server --model <model> --port 8001
+LOCAL_BACKEND=vllm  VLLM_BASE_URL=http://localhost:8001  VLLM_MODEL=<model>
+```
+
+**Measuring the throughput win:** serve the *same* model on each, then drive N
+concurrent `/query` requests and compare tokens/sec and p50/p95 latency (the
+logged `output_tokens` and `latency_ms` per query feed this). vLLM's batching
+pulls ahead decisively as concurrency rises; Ollama stays simplest for single-user
+dev. Embeddings always stay on Ollama (`bge-m3`), so only generation moves.
+
+## How to Run
+
+### One command (whole stack)
+
+```bash
+cp .env.example .env                 # gitignored; set POSTGRES_PASSWORD, ANTHROPIC_API_KEY…
+docker-compose up                    # Postgres (pgvector) + Ollama + the FastAPI app
+
+# First run only — pull the local models into the Ollama container:
+docker compose exec ollama ollama pull bge-m3        # embeddings
+docker compose exec ollama ollama pull qwen2.5:3b    # generation (or a larger LOCAL_MODEL)
+
+# Ingest a corpus, then open the UI:
+docker compose exec api python scripts/ingest.py eval/corpus
+open http://localhost:8000           # web UI  ·  /docs for the API
+```
+
+### Local dev (no app container)
+
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev,api]"          # add ".[rerank]" for the local cross-encoder
+docker-compose up -d db ollama       # just the infra
+python scripts/ingest.py eval/corpus
+uvicorn sourcerer.api.main:app --reload
+curl -s localhost:8000/query -H 'content-type: application/json' \
+  -d '{"query": "What is the on-call rotation?"}' | jq
+```
+
+The response carries `answer`, `citations`, and the routing trace (`route`,
+`model`, `router_reason`, `difficulty`, tokens, `cost_usd`). If the answer isn't
+in the corpus, you get *"I don't know based on the provided documents."*
+
+> `qwen2.5:32b` is large; for a quick test set `LOCAL_MODEL=qwen2.5:3b` in `.env`.
+> Corp proxy blocking in-container model pulls? Run Ollama on the host and point
+> `OLLAMA_BASE_URL` at it.
+
+### Make targets
+
+```bash
+make test            # pytest          make eval          # run the eval harness
+make fmt / make lint # ruff + black    make route-report  # routing split + % saved
+```
+
+<details><summary>Older quickstart (Phase 1 — vector-only MVP)</summary>
 
 ```bash
 # 1. Config
@@ -191,13 +336,10 @@ curl -s localhost:8000/query \
   -d '{"query": "What is X?"}' | jq
 ```
 
-The response contains an `answer` and a `citations` list (each with `source`,
-`chunk_index`, `score`, and a snippet). If the answer isn't in the corpus, the
-system returns *"I don't know based on the provided documents."* rather than guessing.
+The response contains an `answer` and a `citations` list. If the answer isn't in
+the corpus, the system returns *"I don't know based on the provided documents."*
 
-> Tip: `qwen2.5:32b` is large. For a quick local test set `LOCAL_MODEL=qwen2.5:3b`
-> (or any small model) in `.env`. Alternatively run the whole stack — including the
-> API container — with `docker-compose up`.
+</details>
 
 ## Project Structure
 
@@ -224,6 +366,11 @@ scripts/         CLI entrypoints (ingest, run_eval, route_report)
   complex-reasoning marker. Live testing (not unit tests) surfaced it; adding it fixed the
   route. Transparent, list-based heuristics make gaps like this debuggable from one logged
   rationale line.
+- **Calibrated scores make guardrails possible; raw ones don't.** The relevance floor
+  only applies to *cross-encoder rerank* scores — those are comparable across queries.
+  RRF/vector scores aren't (an RRF score of 0.016 means nothing in absolute terms), so a
+  blanket threshold there would silently drop good answers. Knowing *which* score you can
+  threshold is the whole game.
 
 ## Roadmap / Phase Status
 
@@ -231,5 +378,5 @@ scripts/         CLI entrypoints (ingest, run_eval, route_report)
 - [x] Phase 2 — Hybrid retrieval: BM25 + RRF + reranker + swappable chunking
 - [x] Phase 3 — Evaluation harness ⭐ (see results above)
 - [x] Phase 4 — Hybrid routing: heuristic local-vs-API router + privacy override, per-query cost/latency/route instrumentation, savings report
-- [ ] Phase 5 — Production polish (vLLM, observability, guardrails, docker)
+- [x] Phase 5 — Production polish: vLLM backend (swappable via `LOCAL_BACKEND`), structured per-query observability, guardrails (no-context refusal + prompt-injection screen), one-command `docker-compose`, full README
 - [ ] Phase 6 — GraphRAG (optional)

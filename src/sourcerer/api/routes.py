@@ -19,9 +19,11 @@ from sourcerer.api.schemas import (
     SourceInfo,
 )
 from sourcerer.config import get_settings
-from sourcerer.generation import generator
+from sourcerer.generation import generator, guardrails
+from sourcerer.generation.prompts import NO_ANSWER
 from sourcerer.llm import client as llm_client
 from sourcerer.observability import logging as query_log
+from sourcerer.observability import trace
 from sourcerer.retrieval import retriever
 from sourcerer.routing import pricing
 from sourcerer.routing import router as query_router
@@ -48,6 +50,32 @@ def health() -> dict[str, str]:
 def query(request: QueryRequest) -> QueryResponse:
     """Retrieve relevant chunks and answer the question with citations."""
     settings = get_settings()
+
+    # Guardrail 1: screen the input for obvious prompt injection before any work.
+    if settings.enable_injection_check:
+        reason = guardrails.injection_reason(request.query)
+        if reason:
+            _log.warning("rejected query (prompt injection): %s", reason)
+            trace.log_query_event(
+                query=request.query,
+                retrieval_mode="-",
+                chunks=[],
+                route="-",
+                model="-",
+                router_reason="-",
+                difficulty=0.0,
+                input_tokens=0,
+                output_tokens=0,
+                cost_usd=0.0,
+                latency_ms=0,
+                answered=False,
+                guardrail="prompt_injection",
+            )
+            raise HTTPException(
+                status_code=400,
+                detail="Input rejected: it looks like a prompt-injection attempt.",
+            )
+
     resolved_mode = (request.mode or settings.retrieval_mode).lower()
 
     # Optional per-request rerank: only meaningful for hybrid. Use the configured
@@ -84,6 +112,9 @@ def query(request: QueryRequest) -> QueryResponse:
     chunks = retriever.retrieve(
         request.query, settings, mode=resolved_mode, top_k_final=request.top_k
     )
+    # Guardrail 2: drop weakly-relevant chunks; empty context → generator says
+    # "I don't know" instead of guessing.
+    chunks = guardrails.filter_relevant(chunks, settings)
     gen_client = llm_client.client_for(decision.route, settings)
     answer = generator.generate(request.query, chunks, client=gen_client)
     latency_ms = int((time.perf_counter() - started) * 1000)
@@ -91,6 +122,8 @@ def query(request: QueryRequest) -> QueryResponse:
     # Cost is keyed to the model that actually ran (local = $0; see routing.pricing).
     ran_model = answer.model or decision.model
     cost_usd = pricing.estimate_cost(ran_model, answer.input_tokens, answer.output_tokens)
+
+    answered = bool(chunks) and not answer.text.strip().startswith(NO_ANSWER)
 
     query_log.log_query(
         query=request.query,
@@ -104,6 +137,22 @@ def query(request: QueryRequest) -> QueryResponse:
         cost_usd=cost_usd,
         router_reason=decision.reason,
         difficulty=decision.difficulty,
+    )
+    # Structured trace (machine-readable companion to the query_log row).
+    trace.log_query_event(
+        query=request.query,
+        retrieval_mode=mode_label,
+        chunks=chunks,
+        route=decision.route,
+        model=ran_model,
+        router_reason=decision.reason,
+        difficulty=decision.difficulty,
+        input_tokens=answer.input_tokens,
+        output_tokens=answer.output_tokens,
+        cost_usd=cost_usd,
+        latency_ms=latency_ms,
+        answered=answered,
+        guardrail=None if answered else "no_relevant_context",
     )
 
     return QueryResponse(

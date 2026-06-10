@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -32,11 +33,18 @@ class Settings(BaseSettings):
     postgres_user: str = "sourcerer"
     postgres_password: str = "change_me"
 
-    # ---------- Local inference (Ollama) ----------
+    # ---------- Local inference ----------
+    # Generation backend for the local route: ollama (dev) or vllm (prod).
+    # Embeddings always run on Ollama (bge-m3) regardless of this.
+    local_backend: str = "ollama"  # ollama | vllm
     ollama_base_url: str = "http://localhost:11434"
     local_model: str = "qwen2.5:32b"
     embedding_model: str = "bge-m3"
     embedding_dim: int = 1024
+
+    # vLLM (Phase 5) — OpenAI-compatible server for higher-throughput local serving.
+    vllm_base_url: str = ""  # e.g. http://localhost:8001
+    vllm_model: str = ""  # the model id vLLM was launched with
 
     # ---------- Frontier API model (Phase 4 "hard query" route) ----------
     # Talks to an Anthropic-compatible endpoint. anthropic_base_url can point at a
@@ -48,6 +56,21 @@ class Settings(BaseSettings):
     # ---------- Router (Phase 4) ----------
     router_strategy: str = "heuristic"  # heuristic | classifier
     router_hard_threshold: float = 0.7  # difficulty >= this routes to the API model
+
+    # ---------- Guardrails (Phase 5) ----------
+    enable_injection_check: bool = True  # reject obvious prompt-injection inputs
+    # Optional relevance floor: when a cross-encoder reranker ran and the top
+    # chunk scores below this, treat retrieval as "no relevant context" → I don't
+    # know. None = disabled (rely on the empty-context guardrail only).
+    min_relevance_score: float | None = None
+
+    @field_validator("min_relevance_score", mode="before")
+    @classmethod
+    def _blank_to_none(cls, v):
+        """Treat a blank env var (e.g. MIN_RELEVANCE_SCORE=) as unset (None)."""
+        if isinstance(v, str) and v.strip() == "":
+            return None
+        return v
 
     # ---------- Chunking ----------
     chunk_strategy: str = "fixed"  # fixed | semantic
