@@ -48,23 +48,27 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-def _graph_global_query(request: QueryRequest, settings) -> QueryResponse:
+def _graph_global_query(
+    request: QueryRequest, settings, reduce_with_api: bool, reason_prefix: str
+) -> QueryResponse:
     """Answer a whole-corpus question via GraphRAG global search (Phase 6).
 
-    Uses the local model to map-reduce over pre-computed community summaries; cost
-    is therefore local ($0). Logged and shaped like any other query response.
+    Map runs on the local model; the reduce (synthesis) runs on the API model when
+    `reduce_with_api` (and a key is set), else locally. Logged like any response.
     """
     difficulty = query_router.route(request.query, settings).difficulty
     started = time.perf_counter()
     index = graph_store.load(settings.graphrag_root)
     map_client = llm_client.get_llm_client(settings)  # cheap map calls stay local
 
-    # Optionally send only the final reduce (synthesis) to the frontier API model.
+    # Send only the final reduce (synthesis) to the frontier API model if requested.
     reduce_client = None
-    reason = "overview/whole-corpus question → GraphRAG global search"
-    if settings.graphrag_reduce_with_api and settings.anthropic_api_key:
+    reason = reason_prefix
+    if reduce_with_api and settings.anthropic_api_key:
         reduce_client = llm_client.get_api_client(settings)
         reason += f"; reduce via API ({settings.api_model})"
+    elif reduce_with_api:
+        reason += "; API reduce requested but no ANTHROPIC_API_KEY, reduced locally"
 
     result = graph_search.global_search(
         request.query, index, map_client, reduce_client=reduce_client
@@ -156,16 +160,32 @@ def query(request: QueryRequest) -> QueryResponse:
                 detail="Input rejected: it looks like a prompt-injection attempt.",
             )
 
-    # Phase 6: route overview / whole-corpus questions to the parallel GraphRAG
-    # global-search path (when enabled and an index exists); specific questions
-    # fall through to hybrid retrieval below.
-    if (
-        settings.graphrag_enabled
-        and request.route_override is None
+    # Phase 6: GraphRAG global-search path. Taken when explicitly forced
+    # (route_override graph-local / graph-api) or auto-detected for an overview
+    # question while enabled. Specific questions fall through to hybrid below.
+    override = (request.route_override or "auto").lower()
+    forced_graph = override in ("graph-local", "graph-api")
+    auto_graph = (
+        override == "auto"
+        and settings.graphrag_enabled
         and graph_search.is_overview_query(request.query)
-    ):
+    )
+    if forced_graph or auto_graph:
         if graph_store.exists(settings.graphrag_root):
-            return _graph_global_query(request, settings)
+            if override == "graph-api":
+                reduce_with_api, prefix = True, "forced GraphRAG global search"
+            elif override == "graph-local":
+                reduce_with_api, prefix = False, "forced GraphRAG global search"
+            else:
+                reduce_with_api = settings.graphrag_reduce_with_api
+                prefix = "overview/whole-corpus question → GraphRAG global search"
+            return _graph_global_query(request, settings, reduce_with_api, prefix)
+        if forced_graph:
+            raise HTTPException(
+                status_code=400,
+                detail="GraphRAG path requested but no index found. "
+                "Build it first: python scripts/graphrag_index.py",
+            )
         _log.warning("GraphRAG: overview query but no index found; falling back to hybrid.")
 
     resolved_mode = (request.mode or settings.retrieval_mode).lower()
@@ -183,7 +203,6 @@ def query(request: QueryRequest) -> QueryResponse:
     # heuristic always runs (cheap, and gives a difficulty to display); a manual
     # override from the request then wins, noting what auto would have chosen.
     decision = query_router.route(request.query, settings)
-    override = (request.route_override or "auto").lower()
     if override in ("local", "api") and override != decision.route:
         forced_model = settings.api_model if override == "api" else settings.local_model
         decision = query_router.RouteDecision(
