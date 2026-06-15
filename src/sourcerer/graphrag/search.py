@@ -211,26 +211,26 @@ def select_communities(index: GraphIndex, live_sources: set[str] | None = None) 
 
 def global_search(
     query: str,
-    index: GraphIndex,
+    communities: list,
     client: LLMClient,
     reduce_client: LLMClient | None = None,
     live_sources: set[str] | None = None,
 ) -> GraphResult:
-    """Map-reduce over community summaries to answer a whole-corpus question.
+    """Map-reduce over the given communities to answer a whole-corpus question.
 
-    `client` runs the many cheap **map** calls (one per community). `reduce_client`
-    (default: `client`) runs the single **reduce** synthesis — pass the frontier
-    API client here to spend on the one call that decides answer quality while
-    keeping the map bulk local. Phase 4 routing, applied inside GraphRAG.
+    `communities` are pre-selected by the store (largest-by-size for the json
+    backend, pgvector-similarity for postgres). `client` runs the many cheap **map**
+    calls (one per community); `reduce_client` (default: `client`) runs the single
+    **reduce** synthesis — pass the frontier API client to spend on just the one
+    call that decides answer quality while keeping the map bulk local.
 
-    `live_sources` excludes communities/citation files deleted since indexing.
+    `live_sources` strips files deleted since indexing from the citations.
     """
 
     def _live(sources: list[str]) -> list[str]:
         return sources if live_sources is None else [s for s in sources if s in live_sources]
 
     reduce_client = reduce_client or client
-    communities = select_communities(index, live_sources)
     if not communities:
         return GraphResult(text=_NO_ANSWER, path="graph-global")
 

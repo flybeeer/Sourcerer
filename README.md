@@ -381,6 +381,20 @@ python scripts/graphrag_eval.py               # GraphRAG vs hybrid on overview Q
 > wins and what it costs is exactly the senior-level engineering judgment the
 > blueprint is after — graph coverage vs. its N+1-calls-per-query price.
 
+**Storage — JSON file vs. Postgres+pgvector (`GRAPHRAG_STORE`).** The default
+`json` store writes one `graph_index.json` and loads it *whole, into memory, on
+every query* — fine for a small corpus, but it doesn't scale (no indexing, whole-file
+reads, and community selection is "top-N by entity count"). `GRAPHRAG_STORE=postgres`
+puts entities/relationships/communities in Postgres and **embeds each community
+summary into pgvector**, so global search ranks communities by *similarity to the
+query* (HNSW `<=>`) and fetches only the relevant few — better relevance *and* O(k)
+reads instead of O(whole graph). On the Thai-PDF graph, "สิทธิ์การลา" (leave rights)
+surfaces the leave community first, vs. the JSON store returning the 8 biggest
+regardless of question. Reuses the existing `bge-m3` embedder and Postgres — no new
+infra. For very large / heavy-traversal graphs a dedicated graph DB (Neo4j/Neptune)
+is the next step; pgvector-on-the-existing-Postgres is the pragmatic production path
+here.
+
 **Staleness — the graph is a snapshot.** Deleting a document updates the chunk
 store (so hybrid is instantly correct) but *not* the pre-built graph. Two layers
 handle this:

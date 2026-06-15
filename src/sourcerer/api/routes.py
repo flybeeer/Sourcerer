@@ -59,7 +59,6 @@ def _graph_global_query(
     """
     difficulty = query_router.route(request.query, settings).difficulty
     started = time.perf_counter()
-    index = graph_store.load(settings.graphrag_root)
     map_client = llm_client.get_llm_client(settings)  # cheap map calls stay local
 
     # Send only the final reduce (synthesis) to the frontier API model if requested.
@@ -74,8 +73,7 @@ def _graph_global_query(
     # Live-filter against the current corpus so a stale index (sources deleted
     # since indexing) doesn't answer from removed documents — and warn on drift.
     live_sources = {s["source"] for s in corpus.list_sources()}
-    indexed_sources = {src for c in index.communities for src in c.sources}
-    stale = indexed_sources - live_sources
+    stale = graph_store.indexed_sources(settings) - live_sources
     if stale:
         reason += (
             f"; ⚠ graph index stale — {len(stale)} source(s) deleted since indexing "
@@ -83,8 +81,14 @@ def _graph_global_query(
         )
         _log.warning("GraphRAG index stale; deleted sources excluded: %s", sorted(stale))
 
+    # Select the communities to map over (json: largest; postgres: pgvector-ranked).
+    communities = graph_store.select_for_global(request.query, settings, live_sources)
     result = graph_search.global_search(
-        request.query, index, map_client, reduce_client=reduce_client, live_sources=live_sources
+        request.query,
+        communities,
+        map_client,
+        reduce_client=reduce_client,
+        live_sources=live_sources,
     )
     latency_ms = int((time.perf_counter() - started) * 1000)
 
@@ -191,7 +195,7 @@ def query(request: QueryRequest) -> QueryResponse:
         and graph_search.is_overview_query(request.query)
     )
     if forced_graph or auto_graph:
-        if graph_store.exists(settings.graphrag_root):
+        if graph_store.exists(settings):
             if override == "graph-api":
                 reduce_with_api, prefix = True, "forced GraphRAG global search"
             elif override == "graph-local":
@@ -328,7 +332,7 @@ def delete_source(source: str, background: BackgroundTasks) -> DeleteResponse:
     reindex = (
         settings.graphrag_enabled
         and settings.graphrag_reindex_on_delete
-        and graph_store.exists(settings.graphrag_root)
+        and graph_store.exists(settings)
     )
     if reindex:
         _log.info("scheduling background GraphRAG rebuild after deleting %s", source)

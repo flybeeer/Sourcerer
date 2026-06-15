@@ -47,7 +47,7 @@ def _hybrid(question, settings, judge):
     )
 
 
-def _graph(question, index, settings, judge):
+def _graph(question, settings, judge):
     # Reduce on the API model when configured (map stays local) — matches /query.
     reduce_client = None
     name = "GraphRAG global"
@@ -55,8 +55,9 @@ def _graph(question, index, settings, judge):
         reduce_client = get_api_client(settings)
         name = "GraphRAG (API reduce)"
     started = time.perf_counter()
+    communities = graph_store.select_for_global(question, settings)
     res = graph_search.global_search(
-        question, index, get_llm_client(settings), reduce_client=reduce_client
+        question, communities, get_llm_client(settings), reduce_client=reduce_client
     )
     latency = (time.perf_counter() - started) * 1000
     context = "\n\n".join(c.snippet for c in res.citations)
@@ -98,14 +99,12 @@ def main() -> None:
     parser.add_argument("--no-judge", action="store_true", help="Skip LLM-judged quality.")
     args = parser.parse_args()
 
-    if not graph_store.exists(settings.graphrag_root):
+    if not graph_store.exists(settings):
         raise SystemExit(
-            f"No GraphRAG index at {settings.graphrag_root}. "
-            "Build it first: python scripts/graphrag_index.py"
+            "No GraphRAG index found. Build it first: python scripts/graphrag_index.py"
         )
 
     items = load_eval_set(settings.graphrag_overview_eval_set)
-    index = graph_store.load(settings.graphrag_root)
     judge = None if args.no_judge else Judge(settings)
     print(f"Comparing on {len(items)} overview questions …\n")
 
@@ -113,7 +112,7 @@ def main() -> None:
     for item in items:
         print(f"Q: {item.question}")
         hybrid_rows.append(_hybrid(item.question, settings, judge))
-        graph_rows.append(_graph(item.question, index, settings, judge))
+        graph_rows.append(_graph(item.question, settings, judge))
 
     def fmt(v, pct=False):
         if v is None:

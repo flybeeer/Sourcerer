@@ -88,7 +88,7 @@ def build_index(chunks: list[tuple[int, str]], settings: Settings) -> GraphIndex
     from sourcerer import corpus
 
     graph.attach_community_sources(index, corpus.chunk_sources())
-    store.save(index, settings.graphrag_root)
+    store.save(index, settings)
     return index
 
 
@@ -103,7 +103,7 @@ def rebuild_index(settings: Settings) -> GraphIndex:
     """
     from sourcerer import corpus
 
-    old = store.load(settings.graphrag_root)
+    old = store.load(settings)
     live = {s["source"] for s in corpus.list_sources()}
     kept = []
     for c in old.communities:
@@ -114,6 +114,6 @@ def rebuild_index(settings: Settings) -> GraphIndex:
         kept.append(c)
 
     index = GraphIndex(entities=old.entities, relationships=old.relationships, communities=kept)
-    store.save(index, settings.graphrag_root)
+    store.save(index, settings)
     _log.info("graph rebuilt by source: %d → %d communities", len(old.communities), len(kept))
     return index

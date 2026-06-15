@@ -123,7 +123,7 @@ def test_global_search_map_reduce():
             "The documents cover HR and engineering operations.",
         ]
     )
-    res = search.global_search("main themes?", _index_with_two_communities(), client)
+    res = search.global_search("main themes?", _index_with_two_communities().communities, client)
     assert client.calls == 3  # map, map, reduce
     assert res.path == "graph-global"
     assert "HR and engineering" in res.text
@@ -149,7 +149,10 @@ def test_global_search_reduce_uses_separate_client():
     )
 
     res = search.global_search(
-        "main themes?", _index_with_two_communities(), map_client, reduce_client=reduce_client
+        "main themes?",
+        _index_with_two_communities().communities,
+        map_client,
+        reduce_client=reduce_client,
     )
     assert map_client.calls == 2  # only the map calls hit the local client
     assert res.text == "synthesized answer"
@@ -179,13 +182,13 @@ def test_global_search_filters_deleted_source_from_citations():
         communities=[Community(0, ["A", "B"], summary="theme", sources=["keep.md", "gone.md"])],
     )
     client = FakeClient(["SCORE: 90\nPOINTS: a point", "final answer"])
-    res = search.global_search("themes?", idx, client, live_sources={"keep.md"})
+    res = search.global_search("themes?", idx.communities, client, live_sources={"keep.md"})
     assert res.citations[0].sources == ["keep.md"]  # gone.md filtered out
 
 
 def test_global_search_no_helpful_communities():
     client = FakeClient(["SCORE: 0\nPOINTS: none"])
-    res = search.global_search("unrelated?", _index_with_two_communities(), client)
+    res = search.global_search("unrelated?", _index_with_two_communities().communities, client)
     assert res.citations == []
     assert "don't know" in res.text.lower()
 

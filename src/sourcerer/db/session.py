@@ -99,3 +99,37 @@ def init_schema() -> None:
             "difficulty DOUBLE PRECISION",
         ):
             conn.execute(f"ALTER TABLE query_log ADD COLUMN IF NOT EXISTS {ddl}")
+
+        # GraphRAG postgres store (Phase 6 production path). Community summaries are
+        # embedded so global search can rank communities by similarity to the query.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS graph_entities (
+                id          BIGSERIAL PRIMARY KEY,
+                name        TEXT    NOT NULL,
+                type        TEXT    NOT NULL,
+                description TEXT    NOT NULL,
+                chunk_ids   INTEGER[] NOT NULL DEFAULT '{}',
+                sources     TEXT[]    NOT NULL DEFAULT '{}'
+            )
+            """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS graph_relationships (
+                id          BIGSERIAL PRIMARY KEY,
+                source      TEXT NOT NULL,
+                target      TEXT NOT NULL,
+                description TEXT NOT NULL
+            )
+            """)
+        conn.execute(f"""
+            CREATE TABLE IF NOT EXISTS graph_communities (
+                id                INTEGER PRIMARY KEY,
+                summary           TEXT    NOT NULL,
+                entity_names      TEXT[]  NOT NULL DEFAULT '{{}}',
+                sources           TEXT[]  NOT NULL DEFAULT '{{}}',
+                summary_embedding vector({dim})
+            )
+            """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS graph_communities_emb_hnsw
+            ON graph_communities USING hnsw (summary_embedding vector_cosine_ops)
+            """)

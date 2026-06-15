@@ -104,8 +104,13 @@ class Settings(BaseSettings):
     # won't emit the structured format for Thai/garbled OCR text. Costs API tokens
     # per chunk; keep the corpus tiny. Needs ANTHROPIC_API_KEY.
     graphrag_extract_with_api: bool = False
-    graphrag_root: str = "./graphrag"  # where graph artifacts are written/read
+    graphrag_root: str = "./graphrag"  # where graph artifacts are written/read (json store)
     graphrag_overview_eval_set: str = "eval/overview_eval_set.jsonl"
+    # Where the graph is stored. json = a single file loaded per query (simple, dev,
+    # small corpora). postgres = entities/relationships/communities in Postgres with
+    # community summaries embedded in pgvector, so global search ranks communities by
+    # similarity to the query (not top-N by size) — the production path.
+    graphrag_store: str = "json"  # json | postgres
     # Send the final global-search *reduce* (synthesis) to the frontier API model
     # while the many cheap map calls stay local — Phase 4 routing, inside GraphRAG.
     # Needs ANTHROPIC_API_KEY; map + indexing remain local regardless.
