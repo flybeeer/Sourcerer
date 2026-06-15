@@ -190,6 +190,35 @@ def _parse_map(reply: str) -> tuple[int, str]:
     return score, points
 
 
+def rank_by_similarity(
+    query_vec: list[float],
+    communities: list,
+    live_sources: set[str] | None = None,
+    k: int = _MAX_COMMUNITIES,
+) -> list:
+    """Rank communities by cosine similarity of their summary embedding to the
+    query — the json-store equivalent of postgres's pgvector ranking.
+
+    Only communities that carry an embedding participate (singletons aren't
+    summarized, so they have none). Live-source filtered, top-k.
+    """
+    import numpy as np
+
+    q = np.asarray(query_vec, dtype=float)
+    qn = float(np.linalg.norm(q)) or 1.0
+    scored = []
+    for c in communities:
+        if not c.embedding:
+            continue
+        if live_sources is not None and c.sources and not any(s in live_sources for s in c.sources):
+            continue
+        v = np.asarray(c.embedding, dtype=float)
+        sim = float(q @ v) / (qn * (float(np.linalg.norm(v)) or 1.0))
+        scored.append((sim, c))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [c for _, c in scored[:k]]
+
+
 def select_communities(index: GraphIndex, live_sources: set[str] | None = None) -> list:
     """Pick the communities global search maps over: the largest multi-entity
     themes, falling back to all summarized ones for tiny/fragmented graphs.

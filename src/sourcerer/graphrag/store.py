@@ -36,6 +36,14 @@ def _json_exists(settings: Settings) -> bool:
 
 
 def _json_save(index: GraphIndex, settings: Settings) -> None:
+    # Embed summaries (once) so global search can rank by similarity, like postgres.
+    to_embed = [c for c in index.communities if c.summary.strip() and not c.embedding]
+    if to_embed:
+        from sourcerer.ingestion.embeddings import embed_texts
+
+        for c, vec in zip(to_embed, embed_texts([c.summary for c in to_embed]), strict=True):
+            c.embedding = vec
+
     out = _json_path(settings.graphrag_root)
     out.parent.mkdir(parents=True, exist_ok=True)
     payload = {
@@ -96,7 +104,12 @@ def select_for_global(
     if _is_pg(settings):
         return pgstore.top_communities(query, settings, live_sources, k)
     # Imported here to avoid a circular import at module load.
-    from sourcerer.graphrag.search import select_communities
+    from sourcerer.graphrag.search import rank_by_similarity, select_communities
 
     index = _json_load(settings)
+    if any(c.embedding for c in index.communities):
+        from sourcerer.ingestion.embeddings import embed_query
+
+        return rank_by_similarity(embed_query(query), index.communities, live_sources, k)
+    # Older artifact with no embeddings → fall back to largest-by-size.
     return select_communities(index, live_sources)

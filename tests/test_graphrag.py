@@ -160,6 +160,27 @@ def test_global_search_reduce_uses_separate_client():
     assert res.answer_input_tokens == 99 and res.answer_output_tokens == 7
 
 
+def test_rank_by_similarity():
+    comms = [
+        Community(0, ["A"], summary="s0", embedding=[1.0, 0.0, 0.0]),
+        Community(1, ["B"], summary="s1", embedding=[0.0, 1.0, 0.0]),
+        Community(2, ["C"], summary="s2", embedding=[0.0, 0.0, 1.0]),
+        Community(3, ["D"], summary="s3"),  # no embedding → excluded
+    ]
+    ranked = search.rank_by_similarity([0.1, 0.9, 0.0], comms, k=2)
+    assert [c.id for c in ranked] == [1, 0]  # closest to [0,1,0], then [1,0,0]
+    assert all(c.embedding for c in ranked)
+
+
+def test_rank_by_similarity_filters_deleted_sources():
+    comms = [
+        Community(0, ["A"], summary="s", sources=["keep.md"], embedding=[1.0, 0.0]),
+        Community(1, ["B"], summary="s", sources=["gone.md"], embedding=[0.9, 0.1]),
+    ]
+    ranked = search.rank_by_similarity([1.0, 0.0], comms, live_sources={"keep.md"}, k=5)
+    assert [c.id for c in ranked] == [0]  # gone.md community dropped
+
+
 def test_select_communities_drops_deleted_sources():
     idx = GraphIndex(
         entities=[],

@@ -38,6 +38,9 @@ class Community:
     summary: str = ""
     # Source files this community's entities were extracted from (traceability).
     sources: list[str] = field(default_factory=list)
+    # Summary embedding — set by the json store so global search can rank by
+    # similarity (postgres keeps embeddings in pgvector instead). Empty = unranked.
+    embedding: list[float] = field(default_factory=list)
 
 
 @dataclass
