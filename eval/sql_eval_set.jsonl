@@ -1,0 +1,6 @@
+{"question": "What were the total sales in 2025?", "reference_sql": "SELECT SUM(amount) FROM sales WHERE sold_at >= '2025-01-01' AND sold_at < '2026-01-01'"}
+{"question": "How many sales records are there in total?", "reference_sql": "SELECT COUNT(*) FROM sales"}
+{"question": "What is the total sales amount for the north region?", "reference_sql": "SELECT SUM(amount) FROM sales WHERE region = 'north'"}
+{"question": "What is the average sale amount?", "reference_sql": "SELECT AVG(amount) FROM sales"}
+{"question": "How many sales were made in the south region?", "reference_sql": "SELECT COUNT(*) FROM sales WHERE region = 'south'"}
+{"question": "What is the total amount of widget sales?", "reference_sql": "SELECT SUM(amount) FROM sales WHERE product = 'widget'"}

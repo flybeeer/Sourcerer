@@ -121,6 +121,18 @@ class Settings(BaseSettings):
     # re-extraction, no LLM — and removes the deleted doc's themes for good.
     graphrag_reindex_on_delete: bool = False
 
+    # ---------- SQL knowledge base (Phase 7, optional) ----------
+    # Treat a SQLite database as a knowledge source. Two paths share this flag:
+    #   - ingestion: rows pulled via SELECT become RAG documents (scripts/ingest_sql.py);
+    #   - Text-to-SQL: analytical/aggregation questions ("total sales last year") are
+    #     answered by generating a read-only SELECT and running it on the SQLite file.
+    sql_kb_enabled: bool = False
+    sql_kb_path: str = "./data/kb.sqlite"  # the source SQLite file (opened read-only)
+    sql_kb_max_rows: int = 50  # cap rows a generated query may return (safety + cost)
+    # Generate the SQL with the frontier API model instead of the local model. Off by
+    # default (local keeps it free/private); turn on for harder schemas. Needs a key.
+    sql_kb_generate_with_api: bool = False
+
     @property
     def dsn(self) -> str:
         """Build the Postgres connection string from parts.

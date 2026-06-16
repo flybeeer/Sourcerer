@@ -23,12 +23,14 @@ class QueryRequest(BaseModel):
         default=False,
         description="Apply a reranker over the hybrid candidates (ignored for vector mode).",
     )
-    route_override: Literal["auto", "local", "api", "graph-local", "graph-api"] | None = Field(
+    route_override: (
+        Literal["auto", "local", "api", "graph-local", "graph-api", "sql"] | None
+    ) = Field(
         default=None,
         description=(
             "Force the route. auto (default) lets the router decide. local/api force the "
             "generation backend; graph-local/graph-api force the GraphRAG global path with a "
-            "local or API reduce."
+            "local or API reduce; sql forces the Text-to-SQL path (analytical questions)."
         ),
     )
 
