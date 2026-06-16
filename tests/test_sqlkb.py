@@ -15,6 +15,7 @@ from sourcerer.llm.client import ChatResult
 from sourcerer.routing.router import is_analytical_query
 from sourcerer.sqlkb import answer as sql_answer
 from sourcerer.sqlkb import text_to_sql
+from sourcerer.sqlkb.backends import DuckDBBackend, SQLiteBackend, get_backend
 from sourcerer.sqlkb.loader import iter_rows
 from sourcerer.sqlkb.safety import UnsafeSQLError, safe_select
 from sourcerer.sqlkb.schema import describe_schema
@@ -130,7 +131,8 @@ def test_is_analytical_true(q):
 
 
 @pytest.mark.parametrize(
-    "q", ["What is the return policy?", "Explain the onboarding process", "นโยบายคืนสินค้าเป็นยังไง"]
+    "q",
+    ["What is the return policy?", "Explain the onboarding process", "นโยบายคืนสินค้าเป็นยังไง"],
 )
 def test_is_analytical_false(q):
     assert not is_analytical_query(q)
@@ -198,3 +200,124 @@ def test_answer_builds_citation_with_sql(sales_db):
     assert len(result.citations) == 1
     assert "SELECT COUNT(*)" in result.citations[0].snippet
     assert result.input_tokens == 20  # summed across both calls
+
+
+# --- swappable backends -----------------------------------------------------
+
+
+def test_get_backend_default_is_sqlite():
+    assert isinstance(get_backend(Settings()), SQLiteBackend)
+
+
+def test_get_backend_selects_duckdb():
+    assert isinstance(get_backend(Settings(sql_kb_backend="duckdb")), DuckDBBackend)
+
+
+def test_get_backend_rejects_unknown():
+    with pytest.raises(ValueError, match="unknown SQL_KB_BACKEND"):
+        get_backend(Settings(sql_kb_backend="oracle"))
+
+
+@pytest.fixture
+def duckdb_sales_db(tmp_path: Path) -> str:
+    """The same sales table, materialized in a DuckDB file (skips if duckdb absent)."""
+    duckdb = pytest.importorskip("duckdb")
+    path = tmp_path / "kb.duckdb"
+    conn = duckdb.connect(str(path))
+    conn.execute("CREATE TABLE sales (id INTEGER, region TEXT, amount DOUBLE, notes TEXT)")
+    conn.executemany(
+        "INSERT INTO sales VALUES (?, ?, ?, ?)",
+        [
+            (1, "north", 1000.0, "fast shipping"),
+            (2, "south", 500.0, "late delivery"),
+            (3, "north", 1500.0, None),
+        ],
+    )
+    conn.close()
+    return str(path)
+
+
+def _duck_settings(db: str) -> Settings:
+    return Settings(sql_kb_path=db, sql_kb_backend="duckdb", sql_kb_max_rows=50)
+
+
+def test_duckdb_describe_schema(duckdb_sales_db):
+    desc = describe_schema(duckdb_sales_db, _duck_settings(duckdb_sales_db))
+    assert "TABLE sales" in desc
+    assert "region" in desc and "amount" in desc
+    assert "sample rows" in desc
+
+
+def test_duckdb_text_to_sql_runs_generated_query(duckdb_sales_db):
+    client = FakeClient("SELECT SUM(amount) FROM sales")
+    execution = text_to_sql.run("total sales", _duck_settings(duckdb_sales_db), client)
+    assert execution.ok
+    assert execution.rows == [(3000.0,)]
+
+
+def test_duckdb_loader_one_doc_per_row(duckdb_sales_db):
+    rows = list(
+        iter_rows(
+            duckdb_sales_db,
+            "SELECT id, region, amount, notes FROM sales",
+            id_col="id",
+            source_prefix="kb",
+            settings=_duck_settings(duckdb_sales_db),
+        )
+    )
+    assert [s for s, _ in rows] == ["kb:1", "kb:2", "kb:3"]
+    assert "region: north" in rows[0][1]
+    assert "notes:" not in rows[2][1]  # NULL notes skipped
+
+
+def test_duckdb_execution_failure_is_caught(duckdb_sales_db):
+    # A valid-looking SELECT that references a missing column → no-answer, not a crash.
+    client = FakeClient("SELECT nope FROM sales")
+    execution = text_to_sql.run("bad", _duck_settings(duckdb_sales_db), client)
+    assert not execution.ok
+    assert "SQL execution failed" in execution.error
+
+
+# --- cost guards (timeout / scan budget) ------------------------------------
+
+# A recursive CTE that scans far more than any budget here — a stand-in for a
+# generated query that would full-scan a huge table. LIMIT can't prune the work.
+_HEAVY_SQL = (
+    "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < 100000000) "
+    "SELECT count(*) FROM c"
+)
+
+
+def test_sqlite_scan_budget_aborts_runaway_query(sales_db):
+    # timeout off, tiny op budget → deterministic abort regardless of machine speed.
+    settings = Settings(sql_kb_path=sales_db, sql_kb_timeout_s=0, sql_kb_max_scan_ops=100_000)
+    execution = text_to_sql.run("count forever", settings, FakeClient(_HEAVY_SQL))
+    assert not execution.ok
+    assert "scan budget" in execution.error
+
+
+def test_sqlite_timeout_aborts_runaway_query(sales_db):
+    settings = Settings(sql_kb_path=sales_db, sql_kb_timeout_s=0.05, sql_kb_max_scan_ops=0)
+    execution = text_to_sql.run("count forever", settings, FakeClient(_HEAVY_SQL))
+    assert not execution.ok
+    assert "time limit" in execution.error
+
+
+def test_guard_does_not_trip_a_normal_query(sales_db):
+    # A fast query under a generous budget runs to completion, guard untripped.
+    settings = Settings(sql_kb_path=sales_db, sql_kb_timeout_s=5.0, sql_kb_max_scan_ops=1_000_000)
+    execution = text_to_sql.run("total", settings, FakeClient("SELECT SUM(amount) FROM sales"))
+    assert execution.ok
+    assert execution.rows == [(3000.0,)]
+
+
+def test_duckdb_timeout_aborts_runaway_query(duckdb_sales_db):
+    settings = Settings(
+        sql_kb_path=duckdb_sales_db,
+        sql_kb_backend="duckdb",
+        sql_kb_timeout_s=0.1,
+        sql_kb_max_rows=50,
+    )
+    execution = text_to_sql.run("count forever", settings, FakeClient(_HEAVY_SQL))
+    assert not execution.ok
+    assert "time limit" in execution.error

@@ -7,20 +7,14 @@ and its rows are returned for the answer step to synthesize and cite.
 
 from __future__ import annotations
 
-import sqlite3
 from dataclasses import dataclass, field
-from pathlib import Path
 
 from sourcerer.config import Settings
 from sourcerer.generation.prompts import build_sql_messages
 from sourcerer.llm.client import LLMClient
-from sourcerer.sqlkb.connection import connect_ro
+from sourcerer.sqlkb.backends import QueryCostError, get_backend
 from sourcerer.sqlkb.safety import UnsafeSQLError, safe_select
 from sourcerer.sqlkb.schema import describe_schema
-
-# Stop a runaway generated query from scanning forever (SQLite has no statement
-# timeout; the progress handler fires every N virtual-machine ops).
-_PROGRESS_OPS = 1_000_000
 
 
 @dataclass
@@ -53,18 +47,27 @@ def render_table(columns: list[str], rows: list[tuple], max_rows: int = 50) -> s
     return "\n".join([header, sep, *body])
 
 
-def _execute(db_path: str | Path, sql: str) -> tuple[list[str], list[tuple]]:
-    with connect_ro(db_path) as conn:
-        conn.set_progress_handler(lambda: None, _PROGRESS_OPS)  # cheap watchdog hook
-        cursor = conn.execute(sql)
-        columns = [d[0] for d in cursor.description] if cursor.description else []
-        rows = [tuple(r) for r in cursor.fetchall()]
+def _execute(settings: Settings, sql: str) -> tuple[list[str], list[tuple]]:
+    backend = get_backend(settings)
+    with (
+        backend.connect_ro(settings.sql_kb_path) as conn,
+        backend.query_guard(conn, settings) as guard,
+    ):
+        try:
+            cursor = conn.execute(sql)
+            columns = [d[0] for d in cursor.description] if cursor.description else []
+            rows = [tuple(r) for r in cursor.fetchall()]
+        except Exception as exc:
+            # A budget abort surfaces as a generic engine error; name the cause.
+            if guard.tripped:
+                raise QueryCostError(f"query exceeded {guard.tripped}") from exc
+            raise
     return columns, rows
 
 
 def run(query: str, settings: Settings, client: LLMClient) -> SQLExecution:
     """Generate, validate, and execute SQL for `query`. Never raises on bad SQL."""
-    schema = describe_schema(settings.sql_kb_path)
+    schema = describe_schema(settings.sql_kb_path, settings)
     result = client.chat(build_sql_messages(query, schema))
     raw_sql = result.text.strip()
 
@@ -82,7 +85,9 @@ def run(query: str, settings: Settings, client: LLMClient) -> SQLExecution:
 
     base.sql = validated
     try:
-        base.columns, base.rows = _execute(settings.sql_kb_path, validated)
-    except sqlite3.Error as exc:
+        base.columns, base.rows = _execute(settings, validated)
+    except Exception as exc:  # noqa: BLE001 - any engine error → guardrail "I don't know"
+        # Each backend raises its own error type (sqlite3.Error, duckdb.Error, …);
+        # a failed query is never fatal — it becomes a no-answer downstream.
         base.error = f"SQL execution failed: {exc}"
     return base

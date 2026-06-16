@@ -1,33 +1,27 @@
-"""Read-only access to the source SQLite database.
+"""Read-only access to the source SQL knowledge base.
 
-Every connection is opened with the `mode=ro` URI so writes are impossible at the
-engine level — a second line of defence behind the `safety` SQL validation. The
-source DB is external input; we only ever read from it.
+Thin facade over the swappable backends (`backends.get_backend`): callers run a
+validated SELECT against `connect_ro` without caring whether the source is SQLite
+(the demo default) or DuckDB (analytics scale). Every connection is opened
+read-only — a second line of defence behind the `safety` SQL validation.
 """
 
 from __future__ import annotations
 
-import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
+
+from sourcerer.config import Settings
+from sourcerer.sqlkb.backends import get_backend
 
 
 @contextmanager
-def connect_ro(db_path: str | Path) -> Iterator[sqlite3.Connection]:
-    """Yield a read-only SQLite connection to `db_path`.
+def connect_ro(db_path: str | Path, settings: Settings | None = None) -> Iterator[Any]:
+    """Yield a read-only connection to `db_path` using the configured backend.
 
-    Raises FileNotFoundError with a clear message if the file is missing (a
-    `mode=ro` connect to a non-existent file otherwise fails opaquely).
+    Raises FileNotFoundError with a clear message if the file is missing.
     """
-    path = Path(db_path)
-    if not path.exists():
-        raise FileNotFoundError(f"SQL KB database not found: {path} (set SQL_KB_PATH)")
-    # The query string is the SQLite URI form: open the existing file read-only.
-    uri = f"file:{path}?mode=ro"
-    conn = sqlite3.connect(uri, uri=True)
-    try:
-        conn.row_factory = sqlite3.Row
+    with get_backend(settings).connect_ro(db_path) as conn:
         yield conn
-    finally:
-        conn.close()
