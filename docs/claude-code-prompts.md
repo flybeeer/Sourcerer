@@ -65,16 +65,6 @@ vector-only ไว้เทียบ benchmark ใน Phase 3
 
 ## Phase 3 — Evaluation Harness ⭐
 
-> Implement Phase 3 — this is the most important phase. Build an evaluation harness:
-> 1. Define an eval set format (JSONL) of `{question, expected_answer, relevant_doc_ids}` and create
->    a small starter set under `./eval/` (~10 examples) I can expand.
-> 2. Implement retrieval metrics: recall@k, MRR, and hit rate.
-> 3. Implement generation metrics: faithfulness and answer relevancy using an LLM-as-judge
->    (use `EVAL_JUDGE_MODEL`).
-> 4. Write a runner that evaluates a given retrieval config and prints a results table.
-> 5. Run it to compare: vector-only vs hybrid vs hybrid+rerank. Save results to a file.
->
-> The goal is a reproducible comparison table proving which configuration is best and why.
 
 **ทำอะไร:** สร้างเครื่องวัดผล + รันเทียบ 3 config นี่คือพระเอกของ portfolio อย่าข้าม ให้ได้ตารางผลที่
 รันซ้ำได้
