@@ -5,6 +5,7 @@ faked and Path A is tested at the loader level.
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from pathlib import Path
 
@@ -14,11 +15,11 @@ from sourcerer.config import Settings
 from sourcerer.llm.client import ChatResult
 from sourcerer.routing.router import is_analytical_query
 from sourcerer.sqlkb import answer as sql_answer
-from sourcerer.sqlkb import text_to_sql
+from sourcerer.sqlkb import schema_retrieval, text_to_sql
 from sourcerer.sqlkb.backends import DuckDBBackend, SQLiteBackend, get_backend
 from sourcerer.sqlkb.loader import iter_rows
 from sourcerer.sqlkb.safety import UnsafeSQLError, safe_select
-from sourcerer.sqlkb.schema import describe_schema
+from sourcerer.sqlkb.schema import describe_schema, table_signatures
 
 
 @pytest.fixture
@@ -321,3 +322,113 @@ def test_duckdb_timeout_aborts_runaway_query(duckdb_sales_db):
     execution = text_to_sql.run("count forever", settings, FakeClient(_HEAVY_SQL))
     assert not execution.ok
     assert "time limit" in execution.error
+
+
+# --- schema retrieval (wide schemas) ----------------------------------------
+
+_WIDE_TABLES = {
+    "employees": "id INTEGER, full_name TEXT, salary REAL",
+    "customers": "id INTEGER, name TEXT, city TEXT",
+    "products": "id INTEGER, title TEXT, price REAL",
+    "orders": "id INTEGER, customer_id INTEGER, total REAL",
+    "shipments": "id INTEGER, order_id INTEGER, carrier TEXT",
+    "suppliers": "id INTEGER, name TEXT, country TEXT",
+    "invoices": "id INTEGER, order_id INTEGER, amount REAL",
+    "payments": "id INTEGER, invoice_id INTEGER, method TEXT",
+    "regions": "id INTEGER, region_name TEXT",
+    "warehouses": "id INTEGER, location TEXT, capacity INTEGER",
+}
+
+
+@pytest.fixture
+def wide_db(tmp_path: Path) -> str:
+    """A 10-table schema — past the default top_k so retrieval kicks in."""
+    path = tmp_path / "wide.sqlite"
+    conn = sqlite3.connect(path)
+    for table, cols in _WIDE_TABLES.items():
+        conn.execute(f"CREATE TABLE {table} ({cols})")
+        conn.execute(f"INSERT INTO {table} DEFAULT VALUES")
+    conn.commit()
+    conn.close()
+    return str(path)
+
+
+class BowEmbed:
+    """Deterministic bag-of-words embedder so cosine ≈ token overlap (no service)."""
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        toks = [re.findall(r"[a-z0-9]+", t.lower()) for t in texts]
+        vocab = sorted({w for ts in toks for w in ts if len(w) >= 3})
+        index = {w: i for i, w in enumerate(vocab)}
+        out = []
+        for ts in toks:
+            vec = [0.0] * len(vocab)
+            for w in ts:
+                if w in index:
+                    vec[index[w]] += 1.0
+            out.append(vec)
+        return out
+
+
+def test_table_signatures_are_cheap_and_complete(wide_db):
+    sigs = table_signatures(wide_db)
+    assert set(sigs) == set(_WIDE_TABLES)
+    assert sigs["employees"].startswith("TABLE employees (")
+    assert "sample rows" not in sigs["employees"]  # signature = no data peek
+
+
+def test_lexical_ranking_prefers_matching_table(wide_db):
+    sigs = table_signatures(wide_db)
+    ranked = schema_retrieval._lexical_ranking("how many employees and their salary", sigs)
+    assert ranked[0] == "employees"
+
+
+def test_select_schema_narrows_to_top_k(wide_db):
+    settings = Settings(sql_kb_path=wide_db, sql_kb_schema_top_k=3)
+    desc = schema_retrieval.select_schema("total payments by method", wide_db, settings)
+    assert desc.count("TABLE ") == 3  # only the retrieved tables
+    assert "TABLE payments" in desc
+    assert "TABLE warehouses" not in desc  # irrelevant table dropped
+
+
+def test_select_schema_describes_all_under_threshold(sales_db):
+    # 1 table ≤ top_k → identical to plain describe_schema, no embedding needed.
+    settings = Settings(sql_kb_path=sales_db, sql_kb_schema_top_k=8)
+    assert schema_retrieval.select_schema("anything", sales_db, settings) == describe_schema(
+        sales_db, settings
+    )
+
+
+def test_select_schema_top_k_zero_describes_all(wide_db):
+    settings = Settings(sql_kb_path=wide_db, sql_kb_schema_top_k=0)
+    desc = schema_retrieval.select_schema("how many employees", wide_db, settings)
+    assert desc.count("TABLE ") == len(_WIDE_TABLES)
+
+
+def test_embedding_ranking_works_on_its_own(wide_db):
+    # Proves the embedding leg actually ranks (not silently None → lexical fallback).
+    sigs = table_signatures(wide_db)
+    ranked = schema_retrieval._embedding_ranking("carrier that shipped the order", sigs, BowEmbed())
+    assert ranked is not None
+    assert ranked[0] == "shipments"
+
+
+def test_select_tables_fuses_embedding_signal(wide_db):
+    settings = Settings(sql_kb_path=wide_db, sql_kb_schema_top_k=3)
+    sigs = table_signatures(wide_db)
+    tables = schema_retrieval.select_tables(
+        "which carrier shipped the order", sigs, settings, BowEmbed()
+    )
+    assert "shipments" in tables  # carrier/order signal, via lexical + embedding RRF
+    assert len(tables) == 3
+
+
+def test_select_tables_falls_back_when_embeddings_fail(wide_db):
+    class Boom:
+        def embed(self, texts):
+            raise RuntimeError("embedding backend down")
+
+    settings = Settings(sql_kb_path=wide_db, sql_kb_schema_top_k=3)
+    sigs = table_signatures(wide_db)
+    tables = schema_retrieval.select_tables("employee salary report", sigs, settings, Boom())
+    assert "employees" in tables  # lexical ranking still works → no crash

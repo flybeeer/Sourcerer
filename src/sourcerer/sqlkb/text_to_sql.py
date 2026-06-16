@@ -14,7 +14,7 @@ from sourcerer.generation.prompts import build_sql_messages
 from sourcerer.llm.client import LLMClient
 from sourcerer.sqlkb.backends import QueryCostError, get_backend
 from sourcerer.sqlkb.safety import UnsafeSQLError, safe_select
-from sourcerer.sqlkb.schema import describe_schema
+from sourcerer.sqlkb.schema_retrieval import select_schema
 
 
 @dataclass
@@ -67,7 +67,7 @@ def _execute(settings: Settings, sql: str) -> tuple[list[str], list[tuple]]:
 
 def run(query: str, settings: Settings, client: LLMClient) -> SQLExecution:
     """Generate, validate, and execute SQL for `query`. Never raises on bad SQL."""
-    schema = describe_schema(settings.sql_kb_path, settings)
+    schema = select_schema(query, settings.sql_kb_path, settings)
     result = client.chat(build_sql_messages(query, schema))
     raw_sql = result.text.strip()
 

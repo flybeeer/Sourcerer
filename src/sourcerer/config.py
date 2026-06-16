@@ -138,6 +138,11 @@ class Settings(BaseSettings):
     #     the bytes-scanned analogue on a real warehouse (e.g. BigQuery maximum_bytes_billed).
     sql_kb_timeout_s: float = 5.0
     sql_kb_max_scan_ops: int = 0
+    # Schema retrieval: when a source has more tables than this, send only the most
+    # relevant ones to the Text-to-SQL prompt (ranked lexical + embedding → RRF,
+    # same hybrid idea as document retrieval) instead of dumping every table's DDL —
+    # which would blow the context and degrade SQL on a wide schema. 0 = always all.
+    sql_kb_schema_top_k: int = 8
     # Generate the SQL with the frontier API model instead of the local model. Off by
     # default (local keeps it free/private); turn on for harder schemas. Needs a key.
     sql_kb_generate_with_api: bool = False
