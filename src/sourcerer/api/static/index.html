@@ -45,6 +45,9 @@
       background: var(--panel); color: var(--text); font-size: 14px; }
     .controls select:focus { border-color: var(--accent); outline: none; }
     .controls .hint { color: var(--muted); font-size: 12px; }
+    /* Mode/top_k don't apply to forced Graph/SQL routes — dim + disable them. */
+    .controls .is-disabled { opacity: 0.4; }
+    .controls select:disabled, .controls input:disabled { opacity: 0.4; cursor: not-allowed; }
     #status { margin-top: 28px; color: var(--muted); min-height: 22px; }
     .route-card { margin-top: 22px; background: var(--panel); border: 1px solid var(--border);
       border-radius: 12px; padding: 14px 18px; }
@@ -125,9 +128,9 @@
         <option value="graph-api">GraphRAG (API reduce)</option>
         <option value="sql">Text-to-SQL (database)</option>
       </select>
-      <label for="topk">top_k</label>
+      <label for="topk" id="topkLabel">top_k</label>
       <input id="topk" type="number" min="1" max="50" placeholder="5" />
-      <span class="hint">top_k blank = default (5)</span>
+      <span class="hint" id="controlsHint">top_k blank = default (5)</span>
     </div>
 
     <div id="status"></div>
@@ -169,6 +172,28 @@
       chip.onclick = () => { input.value = ex; input.focus(); };
       examplesEl.appendChild(chip);
     }
+
+    // Some control combinations are meaningless: when a Graph or Text-to-SQL route
+    // is forced, the backend takes that path BEFORE reading Mode / top_k (see
+    // routes.py), so retrieval Mode and top_k have no effect. Disable them so the
+    // UI can't offer an invalid combination (e.g. GraphRAG + Vector mode).
+    const modeLabel = document.querySelector('label[for="mode"]');
+    const topkLabel = document.getElementById("topkLabel");
+    const controlsHint = document.getElementById("controlsHint");
+    const RETRIEVAL_ROUTES = new Set(["auto", "local", "api"]);
+
+    function syncControls() {
+      const usesRetrieval = RETRIEVAL_ROUTES.has(routeSelect.value);
+      for (const [el, label] of [[modeSelect, modeLabel], [topkInput, topkLabel]]) {
+        el.disabled = !usesRetrieval;
+        label.classList.toggle("is-disabled", !usesRetrieval);
+      }
+      controlsHint.textContent = usesRetrieval
+        ? "top_k blank = default (5)"
+        : "Mode & top_k don't apply to this route";
+    }
+    routeSelect.addEventListener("change", syncControls);
+    syncControls();
 
     function escapeHtml(s) {
       return s.replace(/[&<>"']/g, c => (
@@ -229,14 +254,17 @@
       resultEl.innerHTML = "";
 
       const body = { query };
-      if (modeSelect.value === "hybrid+rerank") {
-        body.mode = "hybrid";
-        body.rerank = true;
-      } else {
-        body.mode = modeSelect.value;
+      // Only send retrieval controls when they actually apply (see syncControls).
+      if (!modeSelect.disabled) {
+        if (modeSelect.value === "hybrid+rerank") {
+          body.mode = "hybrid";
+          body.rerank = true;
+        } else {
+          body.mode = modeSelect.value;
+        }
+        const topk = parseInt(topkInput.value, 10);
+        if (Number.isFinite(topk)) body.top_k = topk;
       }
-      const topk = parseInt(topkInput.value, 10);
-      if (Number.isFinite(topk)) body.top_k = topk;
       if (routeSelect.value !== "auto") body.route_override = routeSelect.value;
 
       const started = performance.now();
