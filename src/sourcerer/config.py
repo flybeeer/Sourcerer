@@ -121,6 +121,27 @@ class Settings(BaseSettings):
     # re-extraction, no LLM — and removes the deleted doc's themes for good.
     graphrag_reindex_on_delete: bool = False
 
+    # ---------- SQL knowledge base (Phase 7, optional) ----------
+    # Treat a SQLite database as a knowledge source. Two paths share this flag:
+    #   - ingestion: rows pulled via SELECT become RAG documents (scripts/ingest_sql.py);
+    #   - Text-to-SQL: analytical/aggregation questions ("total sales last year") are
+    #     answered by generating a read-only SELECT and running it on the SQLite file.
+    sql_kb_enabled: bool = False
+    sql_kb_path: str = "./data/kb.sqlite"  # the source DB file (opened read-only)
+    # Storage engine behind the source DB: sqlite (demo) or duckdb (columnar; for
+    # analytics-scale tables, aggregations push down to a column store).
+    sql_kb_backend: str = "sqlite"  # sqlite | duckdb
+    sql_kb_max_rows: int = 50  # cap rows a generated query may return (safety + cost)
+    # Runtime cost guards on a generated query (defence vs a full-scan on a big table):
+    #   timeout  — wall-clock cap; aborts the query on both backends (0 = off).
+    #   max_scan_ops — SQLite VM-op budget, a proxy for rows/bytes scanned (0 = off);
+    #     the bytes-scanned analogue on a real warehouse (e.g. BigQuery maximum_bytes_billed).
+    sql_kb_timeout_s: float = 5.0
+    sql_kb_max_scan_ops: int = 0
+    # Generate the SQL with the frontier API model instead of the local model. Off by
+    # default (local keeps it free/private); turn on for harder schemas. Needs a key.
+    sql_kb_generate_with_api: bool = False
+
     @property
     def dsn(self) -> str:
         """Build the Postgres connection string from parts.

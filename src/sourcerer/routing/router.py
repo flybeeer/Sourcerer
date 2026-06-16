@@ -137,6 +137,57 @@ _SIMPLE = (
     "ความหมายของ",  # definition of
 )
 
+# Analytical / aggregation markers → answer with Text-to-SQL (Phase 7), not RAG.
+# These questions need a SUM/COUNT/AVG over many rows; retrieval can't do that.
+_ANALYTICAL = (
+    "total",
+    "sum of",
+    "how many",
+    "count of",
+    "number of",
+    "average",
+    "avg",
+    "mean",
+    "median",
+    "maximum",
+    "minimum",
+    "highest",
+    "lowest",
+    "most",
+    "least",
+    "per month",
+    "per year",
+    "per day",
+    "by month",
+    "by year",
+    "by region",
+    "grouped by",
+    "trend",
+    "growth",
+    "percentage of",
+    # Thai
+    "ยอดรวม",  # total
+    "ยอดขาย",  # sales (figure)
+    "รวมทั้งหมด",  # grand total
+    "ทั้งหมดกี่",  # how many in total
+    "จำนวน",  # count / number of
+    "กี่",  # how many
+    "เฉลี่ย",  # average
+    "ค่าเฉลี่ย",  # average value
+    "มากที่สุด",  # most / maximum
+    "น้อยที่สุด",  # least / minimum
+    "สูงสุด",  # highest
+    "ต่ำสุด",  # lowest
+    "ต่อเดือน",  # per month
+    "ต่อปี",  # per year
+    "ต่อวัน",  # per day
+    "แต่ละเดือน",  # each month
+    "แต่ละปี",  # each year
+    "เปอร์เซ็นต์",  # percentage
+    "ร้อยละ",  # percentage
+    "แนวโน้ม",  # trend
+)
+
 _LATIN_WORD_RE = re.compile(r"[A-Za-z0-9]+")
 _THAI_CHAR_RE = re.compile(r"[฀-๿]")
 # Thai is scriptio continua (no spaces between words), so whitespace tokenization
@@ -259,6 +310,16 @@ class HeuristicRouter:
             "simple_hits": simple_hits,
         }
         return round(score, 3), signals
+
+
+def is_analytical_query(query: str) -> bool:
+    """True if the query asks for an aggregation/number (→ Text-to-SQL path).
+
+    A standalone predicate (like graphrag's is_overview_query) so the SQL routing
+    decision stays separate from the local-vs-API difficulty score.
+    """
+    q = query.lower()
+    return any(m in q for m in _ANALYTICAL)
 
 
 def route(query: str, settings: Settings) -> RouteDecision:

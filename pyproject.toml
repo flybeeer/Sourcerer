@@ -47,6 +47,10 @@ api = [
 graphrag = [
     "networkx",
 ]
+# Columnar backend for the SQL knowledge base (Phase 7) at analytics scale.
+duckdb = [
+    "duckdb",
+]
 
 [project.scripts]
 sourcerer-ingest = "scripts.ingest:main"

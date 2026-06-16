@@ -76,6 +76,11 @@ know"*. Swap in your own PDFs/Markdown via `scripts/ingest.py`.
   Inference behind one LLM client wrapper:  Ollama (dev) ⇄ vLLM (prod) · frontier API
 ```
 
+> 📐 For the **full end-to-end flow** — every ingest source and transform, the exact
+> query decision order (Text-to-SQL / GraphRAG / Hybrid RAG), and how query
+> classification picks each path and the local-vs-API backend — see
+> [`docs/architecture-flow.md`](docs/architecture-flow.md).
+
 ### Technology choices (and why)
 
 | Layer            | Choice                          | Why |
@@ -476,14 +481,57 @@ a single winner — it's that the eval **measured** exactly where each approach 
 what it costs. (Generation metrics are directional: hybrid relevancy ranged 0.725–1.000
 across runs — same `qwen2.5:7b`-judge variance flagged in the eval section above.)
 
+## Database as a knowledge base (Phase 7 — optional)
+
+A SQLite database can be a knowledge source too — but database content splits into
+**two question types that need different machinery**, and conflating them is the
+classic RAG mistake:
+
+| Question | Example | Right tool |
+|----------|---------|-----------|
+| Content / semantic | *"what do customers complain about?"* | **Hybrid RAG** (chunk + embed the rows) |
+| Analytical / aggregation | *"total sales last year"*, *"how many customers in the north"* | **Text-to-SQL** (generate `SELECT SUM(...)`, run it) |
+
+Chunking **cannot** answer the aggregation column: retrieval only pulls the top-k
+chunks, so it can never `SUM` thousands of rows, and an LLM adding numbers from text
+is unreliable. So Sourcerer routes each:
+
+1. **Ingestion (RAG)** — `scripts/ingest_sql.py "SELECT id, region, notes FROM sales"`
+   pulls rows via a read-only `SELECT`, turns **1 row = 1 document** (source label
+   `kb:<id>` for traceable citations), and runs them through the normal
+   chunk→embed→store pipeline. DB rows become just another `source`.
+2. **Text-to-SQL** — analytical questions are auto-detected by the router (markers
+   like *"total / how many / average / per year / ยอดรวม / กี่ / เฉลี่ย"*) and
+   answered live: introspect the schema → LLM writes one `SELECT` → **validate it's
+   a single read-only query** → execute → phrase the answer. The **executed SQL +
+   result rows are the citation** — transparent and re-runnable. Force it with
+   `route_override="sql"`.
+
+**Safety is layered:** the SQLite file is opened read-only (`mode=ro` URI) *and* the
+generated SQL is rejected unless it's a single statement starting with `SELECT`/`WITH`
+with no `INSERT/UPDATE/DELETE/DROP/PRAGMA/…`; a row `LIMIT` is always enforced. A
+rejected query yields *"I don't know"*, never a guess. Privacy still applies — a
+sensitive query keeps SQL generation on the local model.
+
+```bash
+SQL_KB_ENABLED=true                           # in .env
+python scripts/build_sql_demo.py              # writes a demo sales DB to SQL_KB_PATH
+python scripts/ingest_sql.py "SELECT id, region, notes FROM sales" --id-col id
+python scripts/sql_eval.py                     # Text-to-SQL execution accuracy
+```
+
+**Eval — the point, as always:** `scripts/sql_eval.py` measures *execution accuracy*
+(does the generated query's result match a hand-written reference query's result?) —
+the standard text-to-SQL metric — over `eval/sql_eval_set.jsonl`.
+
 ## Project Structure
 
 ```
-src/sourcerer/   ingestion · retrieval · routing · generation · graphrag · eval · api · llm · observability
-eval/            eval set + overview eval set + generated results
-data/            document corpus (gitignored, keep small)
+src/sourcerer/   ingestion · retrieval · routing · generation · graphrag · sqlkb · eval · api · llm · observability
+eval/            eval set + overview eval set + sql eval set + generated results
+data/            document corpus + SQL KB SQLite file (gitignored, keep small)
 graphrag/        GraphRAG index artifacts (JSON, generated)
-scripts/         CLI entrypoints (ingest, run_eval, route_report, graphrag_index, graphrag_eval)
+scripts/         CLI entrypoints (ingest, ingest_sql, build_sql_demo, run_eval, route_report, graphrag_index, graphrag_eval, sql_eval)
 ```
 
 ## Trade-offs & Lessons
@@ -516,3 +564,4 @@ scripts/         CLI entrypoints (ingest, run_eval, route_report, graphrag_index
 - [x] Phase 4 — Hybrid routing: heuristic local-vs-API router + privacy override, per-query cost/latency/route instrumentation, savings report
 - [x] Phase 5 — Production polish: vLLM backend (swappable via `LOCAL_BACKEND`), structured per-query observability, guardrails (no-context refusal + prompt-injection screen), one-command `docker-compose`, full README
 - [x] Phase 6 — GraphRAG (optional): parallel graph path (entity/relationship extraction via local model → communities → summaries); local + global (map-reduce) search; router sends overview questions to GraphRAG global; eval compares vs hybrid on quality + cost. Gated behind `GRAPHRAG_ENABLED`.
+- [x] Phase 7 — SQL knowledge base (optional): a SQLite DB as a source via two paths — RAG ingestion of content rows (`ingest_sql.py`, 1 row = 1 doc) and **Text-to-SQL** for analytical/aggregation questions (read-only `SELECT` generation + validation + execution, SQL-as-citation). Router auto-detects analytical queries; execution-accuracy eval. Gated behind `SQL_KB_ENABLED`.
