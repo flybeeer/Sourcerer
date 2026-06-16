@@ -522,7 +522,13 @@ python scripts/sql_eval.py                     # Text-to-SQL execution accuracy
 
 **Eval — the point, as always:** `scripts/sql_eval.py` measures *execution accuracy*
 (does the generated query's result match a hand-written reference query's result?) —
-the standard text-to-SQL metric — over `eval/sql_eval_set.jsonl`.
+the standard text-to-SQL metric — over `eval/sql_eval_set.jsonl`, alongside latency,
+SQL-gen tokens, prompt-schema narrowing, and cost-guard aborts.
+
+> 📈 **Scaling this path beyond a demo** — a swappable DuckDB (columnar) backend,
+> runtime cost guards (query timeout + scan budget), and schema retrieval (send only
+> the relevant tables to the prompt on a wide schema) — is written up, with the
+> *what / how / why* of each, in [`docs/sql-kb-scaling.md`](docs/sql-kb-scaling.md).
 
 ## Project Structure
 
