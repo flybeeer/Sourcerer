@@ -45,24 +45,20 @@ class UnsafeSQLError(ValueError):
 
 
 def _strip(raw: str) -> str:
-    """Strip fences, leading prose, and the trailing semicolon/whitespace.
+    """Reduce a chatty model reply to a single candidate statement.
 
-    Small models sometimes wrap the query in markdown or a sentence; we slice from
-    the first SELECT/WITH so a correct query isn't rejected for its preamble. This
-    does not weaken safety — the sliced statement still goes through every check.
+    Small models wrap the query in markdown and/or explain it before *and* after
+    the SQL. We (1) drop markdown fences, (2) slice from the first SELECT/WITH so a
+    leading sentence is shed, and (3) keep only up to the first ';' so a trailing
+    explanation (or a tacked-on second statement) is dropped rather than rejected.
+    The single statement that remains still goes through every safety check, and
+    the connection is read-only regardless — so dropping extra statements is safe.
     """
     text = _FENCE_RE.sub("", raw).strip()
     match = _SELECT_START_RE.search(text)
     if match:
         text = text[match.start() :]
-    return text.rstrip(";").strip()
-
-
-def _is_multi_statement(sql: str) -> bool:
-    """True if a semicolon is followed by more non-whitespace (a 2nd statement)."""
-    # A single trailing ';' was already stripped; any remaining ';' that has
-    # content after it means more than one statement.
-    return any(part.strip() for part in sql.split(";")[1:])
+    return text.split(";", 1)[0].strip()
 
 
 def safe_select(raw: str, max_rows: int) -> str:
@@ -76,9 +72,6 @@ def safe_select(raw: str, max_rows: int) -> str:
     first = first_word.group(0) if first_word else None
     if first not in ("select", "with"):
         raise UnsafeSQLError(f"not a SELECT (starts with {first!r})")
-
-    if _is_multi_statement(sql):
-        raise UnsafeSQLError("multiple statements are not allowed")
 
     # Word-boundary match so columns like `created_at` don't trip "create".
     forbidden = [kw for kw in _FORBIDDEN if re.search(rf"\b{kw}\b", lowered)]

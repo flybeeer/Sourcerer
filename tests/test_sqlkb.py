@@ -80,7 +80,6 @@ def test_safe_select_strips_fences():
         "DROP TABLE sales",
         "INSERT INTO sales VALUES (1)",
         "PRAGMA table_info(sales)",
-        "SELECT 1; DROP TABLE sales",
         "",
     ],
 )
@@ -94,6 +93,17 @@ def test_safe_select_extracts_sql_from_prose_prefix():
     assert safe_select("Here is the SQL: SELECT COUNT(*) FROM sales", 50) == (
         "SELECT COUNT(*) FROM sales LIMIT 50"
     )
+
+
+def test_safe_select_drops_trailing_explanation():
+    # Chatty models add prose after the query; keep only the first statement.
+    raw = "SELECT product FROM sales;\n\nThis query returns every product sold."
+    assert safe_select(raw, 50) == "SELECT product FROM sales LIMIT 50"
+
+
+def test_safe_select_takes_first_statement_only():
+    # A tacked-on second statement is dropped, not run (read-only conn besides).
+    assert safe_select("SELECT 1; DROP TABLE sales", 50) == "SELECT 1 LIMIT 50"
 
 
 def test_safe_select_allows_cte_and_column_named_like_keyword():

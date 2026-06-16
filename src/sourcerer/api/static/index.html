@@ -123,6 +123,7 @@
         <option value="api">API model</option>
         <option value="graph-local">GraphRAG (local reduce)</option>
         <option value="graph-api">GraphRAG (API reduce)</option>
+        <option value="sql">Text-to-SQL (database)</option>
       </select>
       <label for="topk">top_k</label>
       <input id="topk" type="number" min="1" max="50" placeholder="5" />
@@ -157,6 +158,8 @@
       "Where are Sourcerer's offices located?",
       "Compare incident severity levels and explain why a Sev-1 is handled differently than a Sev-3.",
       "What is the on-call salary stipend?",
+      "What were the total sales in 2025?",
+      "ยอดขายรวมของปี 2025 เท่าไหร่",
     ];
     const examplesEl = document.getElementById("examples");
     for (const ex of EXAMPLES) {
@@ -189,6 +192,8 @@
             <div class="top">
               <span class="rbadge ${routeClass}">${escapeHtml(data.route)}</span>
               <span class="model">${escapeHtml(data.model || "")}</span>
+              ${data.retrieval_path && data.retrieval_path !== "hybrid"
+                ? `<span class="model">via ${escapeHtml(data.retrieval_path)}</span>` : ""}
             </div>
             <div class="reason">${escapeHtml(data.router_reason || "")}</div>
             <div class="stats">difficulty <b>${diff}</b> · tokens
