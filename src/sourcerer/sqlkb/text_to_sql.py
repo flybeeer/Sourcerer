@@ -14,7 +14,7 @@ from sourcerer.generation.prompts import build_sql_messages
 from sourcerer.llm.client import LLMClient
 from sourcerer.sqlkb.backends import QueryCostError, get_backend
 from sourcerer.sqlkb.safety import UnsafeSQLError, safe_select
-from sourcerer.sqlkb.schema import describe_schema
+from sourcerer.sqlkb.schema_retrieval import select_schema
 
 
 @dataclass
@@ -29,6 +29,9 @@ class SQLExecution:
     model: str = ""
     input_tokens: int = 0
     output_tokens: int = 0
+    # How many tables were described in the prompt — equals the whole schema unless
+    # schema retrieval narrowed it (so eval can measure that narrowing per query).
+    prompt_tables: int = 0
 
     @property
     def ok(self) -> bool:
@@ -67,7 +70,7 @@ def _execute(settings: Settings, sql: str) -> tuple[list[str], list[tuple]]:
 
 def run(query: str, settings: Settings, client: LLMClient) -> SQLExecution:
     """Generate, validate, and execute SQL for `query`. Never raises on bad SQL."""
-    schema = describe_schema(settings.sql_kb_path, settings)
+    schema = select_schema(query, settings.sql_kb_path, settings)
     result = client.chat(build_sql_messages(query, schema))
     raw_sql = result.text.strip()
 
@@ -76,6 +79,7 @@ def run(query: str, settings: Settings, client: LLMClient) -> SQLExecution:
         model=result.model,
         input_tokens=result.input_tokens,
         output_tokens=result.output_tokens,
+        prompt_tables=sum(1 for line in schema.splitlines() if line.startswith("TABLE ")),
     )
     try:
         validated = safe_select(raw_sql, settings.sql_kb_max_rows)
