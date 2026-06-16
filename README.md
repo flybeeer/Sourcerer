@@ -76,6 +76,11 @@ know"*. Swap in your own PDFs/Markdown via `scripts/ingest.py`.
   Inference behind one LLM client wrapper:  Ollama (dev) ⇄ vLLM (prod) · frontier API
 ```
 
+> 📐 For the **full end-to-end flow** — every ingest source and transform, the exact
+> query decision order (Text-to-SQL / GraphRAG / Hybrid RAG), and how query
+> classification picks each path and the local-vs-API backend — see
+> [`docs/architecture-flow.md`](docs/architecture-flow.md).
+
 ### Technology choices (and why)
 
 | Layer            | Choice                          | Why |
