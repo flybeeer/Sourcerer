@@ -29,6 +29,9 @@ class SQLExecution:
     model: str = ""
     input_tokens: int = 0
     output_tokens: int = 0
+    # How many tables were described in the prompt — equals the whole schema unless
+    # schema retrieval narrowed it (so eval can measure that narrowing per query).
+    prompt_tables: int = 0
 
     @property
     def ok(self) -> bool:
@@ -76,6 +79,7 @@ def run(query: str, settings: Settings, client: LLMClient) -> SQLExecution:
         model=result.model,
         input_tokens=result.input_tokens,
         output_tokens=result.output_tokens,
+        prompt_tables=sum(1 for line in schema.splitlines() if line.startswith("TABLE ")),
     )
     try:
         validated = safe_select(raw_sql, settings.sql_kb_max_rows)

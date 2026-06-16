@@ -432,3 +432,36 @@ def test_select_tables_falls_back_when_embeddings_fail(wide_db):
     sigs = table_signatures(wide_db)
     tables = schema_retrieval.select_tables("employee salary report", sigs, settings, Boom())
     assert "employees" in tables  # lexical ranking still works → no crash
+
+
+# --- eval instrumentation (latency / tokens / narrowing) --------------------
+
+
+def test_execution_reports_full_schema_when_not_narrowed(sales_db):
+    # 1 table ≤ top_k → whole schema in the prompt → prompt_tables counts it.
+    execution = text_to_sql.run("total", _settings(sales_db), FakeClient("SELECT 1"))
+    assert execution.prompt_tables == 1
+
+
+def test_execution_reports_narrowed_prompt_tables(wide_db):
+    # 10 tables, top_k=3 → schema retrieval trims the prompt to 3 (Ollama absent in
+    # tests → embedding leg degrades to lexical, still narrows). This is the number
+    # scripts/sql_eval.py averages to show retrieval's effect.
+    settings = Settings(sql_kb_path=wide_db, sql_kb_schema_top_k=3)
+    execution = text_to_sql.run("employee salary", settings, FakeClient("SELECT 1"))
+    assert execution.prompt_tables == 3
+
+
+@pytest.mark.parametrize(
+    "values, p, expected",
+    [
+        ([1, 2, 3, 4], 0.5, 2.5),
+        ([10, 20, 30, 40, 50], 0.95, 48.0),
+        ([42], 0.5, 42),
+        ([], 0.9, 0.0),
+    ],
+)
+def test_percentile(values, p, expected):
+    from scripts.sql_eval import _percentile
+
+    assert _percentile(values, p) == expected

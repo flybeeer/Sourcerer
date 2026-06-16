@@ -5,6 +5,11 @@ then have the model generate + run its own SELECT, and compare the result sets.
 "Execution accuracy" = fraction of questions whose generated result matches the
 reference result — the standard text-to-SQL metric, and what backs the README claim.
 
+Alongside accuracy we report the operational numbers the later hardening exists to
+move: end-to-end **latency**, SQL-generation **tokens**, how many tables schema
+retrieval put in the prompt vs the whole schema (**prompt narrowing**), and how many
+queries the cost **guards** aborted.
+
 This makes real LLM calls (SQL generation), so it is not free. Build the demo DB
 first if you don't have your own:
 
@@ -17,12 +22,14 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import time
 from pathlib import Path
 
 from sourcerer.config import get_settings
 from sourcerer.llm.client import get_api_client, get_llm_client
 from sourcerer.sqlkb import text_to_sql
 from sourcerer.sqlkb.connection import connect_ro
+from sourcerer.sqlkb.schema import table_signatures
 
 _TOL = 1e-6
 
@@ -30,6 +37,18 @@ _TOL = 1e-6
 def _run_reference(db_path: str, sql: str) -> list[tuple]:
     with connect_ro(db_path) as conn:
         return [tuple(r) for r in conn.execute(sql).fetchall()]
+
+
+def _percentile(values: list[float], p: float) -> float:
+    """Linear-interpolated percentile (p in [0, 1]); 0.0 for an empty list."""
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    k = (len(ordered) - 1) * p
+    lo, hi = math.floor(k), math.ceil(k)
+    if lo == hi:
+        return ordered[int(k)]
+    return ordered[lo] * (hi - k) + ordered[hi] * (k - lo)
 
 
 def _cell_eq(a, b) -> bool:
@@ -79,23 +98,49 @@ def main() -> None:
 
     lines = Path(args.eval_set).read_text().splitlines()
     items = [json.loads(line) for line in lines if line.strip()]
+    if not items:
+        raise SystemExit(f"No questions in {args.eval_set}")
+    total_tables = len(table_signatures(args.db, settings))
     print(f"Evaluating Text-to-SQL on {len(items)} questions (db: {args.db}) …\n")
 
     correct = 0
+    latencies_ms: list[float] = []
+    gen_tokens: list[int] = []
+    prompt_tables: list[int] = []
+    guard_trips = 0
     for item in items:
         question, ref_sql = item["question"], item["reference_sql"]
         expected = _run_reference(args.db, ref_sql)
+        start = time.perf_counter()
         execution = text_to_sql.run(question, settings, client)
+        latencies_ms.append((time.perf_counter() - start) * 1000)
+        gen_tokens.append(execution.input_tokens + execution.output_tokens)
+        prompt_tables.append(execution.prompt_tables)
+        if execution.error and "exceeded" in execution.error:
+            guard_trips += 1
+
         ok = execution.ok and _results_match(expected, execution.rows)
         correct += ok
         mark = "✓" if ok else "✗"
-        print(f"{mark} {question}")
+        print(f"{mark} {question}  ({latencies_ms[-1]:.0f} ms)")
         print(f"    gen: {execution.sql if execution.ok else execution.error}")
         if not ok:
             print(f"    expected {expected} | got {execution.rows if execution.ok else '—'}")
 
-    accuracy = correct / len(items) if items else 0.0
-    print(f"\nExecution accuracy: {correct}/{len(items)} = {accuracy:.0%}")
+    n = len(items)
+    accuracy = correct / n if n else 0.0
+    avg_tables = sum(prompt_tables) / n if n else 0.0
+    print(f"\nExecution accuracy: {correct}/{n} = {accuracy:.0%}")
+    print(
+        "Latency ms: "
+        f"mean {sum(latencies_ms) / n:.0f} · "
+        f"median {_percentile(latencies_ms, 0.5):.0f} · "
+        f"p95 {_percentile(latencies_ms, 0.95):.0f}"
+    )
+    print(f"SQL-gen tokens/query: mean {sum(gen_tokens) / n:.0f}")
+    narrowing = f" ({avg_tables / total_tables:.0%} of schema)" if total_tables else ""
+    print(f"Prompt schema: mean {avg_tables:.1f}/{total_tables} tables{narrowing}")
+    print(f"Cost-guard aborts: {guard_trips}/{n}")
 
 
 if __name__ == "__main__":
