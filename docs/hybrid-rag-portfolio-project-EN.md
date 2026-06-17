@@ -26,27 +26,33 @@ includes the three things that separate amateurs from professionals:
 ## Target Architecture
 
 ```
-                    ┌─────────────────────────────────────┐
-   Documents ───►   │  Ingestion: chunk + embed + index    │
- (PDF/MD/HTML)      └──────────────┬──────────────────────┘
-                                   ▼
-                    ┌─────────────────────────────────────┐
-   User query ──►   │  Hybrid Retrieval                    │
-                    │  vector (pgvector) + BM25 + reranker │
-                    └──────────────┬──────────────────────┘
-                                   ▼
-                    ┌─────────────────────────────────────┐
-                    │  Router: easy/sensitive → local      │
-                    │          hard → API (frontier)       │
-                    └──────────────┬──────────────────────┘
-                                   ▼
-                    ┌─────────────────────────────────────┐
-                    │  Generation + citations              │
-                    └──────────────┬──────────────────────┘
-                                   ▼
-                    ┌─────────────────────────────────────┐
-                    │  Eval harness + logging/observability│
-                    └─────────────────────────────────────┘
+   Documents (PDF/MD/HTML) ─┐
+                            ├─►  Ingestion: chunk + embed + index → pgvector + BM25
+   DB rows (SQLite) ────────┘    (Phase 7: 1 row = 1 doc, same pipeline)
+
+
+   User query ──►   ┌─────────────────────────────────────────────┐
+                    │  Query classifier — route by question shape │
+                    ├─────────────────────────────────────────────┤
+                    │  analytical?  → Text-to-SQL (Phase 7)        │
+                    │     schema → SELECT → validate → run → cite  │
+                    │  overview?    → GraphRAG global (Phase 6)    │
+                    │  otherwise    → Hybrid Retrieval (default)   │
+                    │     vector (pgvector) + BM25 + reranker      │
+                    └──────────────────────┬──────────────────────┘
+                                           ▼
+                    ┌─────────────────────────────────────────────┐
+                    │  Router: easy/sensitive → local             │
+                    │          hard → API (frontier)              │
+                    └──────────────────────┬──────────────────────┘
+                                           ▼
+                    ┌─────────────────────────────────────────────┐
+                    │  Generation + citations                     │
+                    └──────────────────────┬──────────────────────┘
+                                           ▼
+                    ┌─────────────────────────────────────────────┐
+                    │  Eval harness + logging/observability       │
+                    └─────────────────────────────────────────────┘
 ```
 
 ### Technology Choices per Layer
@@ -63,6 +69,9 @@ includes the three things that separate amateurs from professionals:
 | Embedding | **bge-m3** or OpenAI embeddings | Pick one that can run locally to stay consistent with the theme |
 | Backend/API | **FastAPI** | Python standard for serving |
 | Frontend | Streamlit (fast) or Next.js (shows craft) | Depends on your time budget |
+| Database source *(Phase 7)* | **SQLite** (read-only) → **DuckDB** (columnar) | Treat a database as a knowledge source too. SQLite is zero-setup for a demo; DuckDB pushes aggregations down at analytics scale. Swappable via `SQL_KB_BACKEND`, mirroring the `LOCAL_BACKEND` pattern. |
+| Text-to-SQL *(Phase 7)* | **Local LLM** → validated read-only `SELECT` | Analytical/aggregation questions chunking can't answer (e.g. `SUM` over thousands of rows). The executed SQL + result rows become the citation. |
+| Schema retrieval *(Phase 7)* | **bge-m3 + lexical → RRF** | On a wide schema, send only the most relevant tables to the prompt — the same hybrid-retrieval idea, applied to schema selection. |
 
 > Pick a dataset that is "hard to answer with plain ChatGPT" — e.g. internal company-policy
 > documents, domain-specific technical manuals, or a public corpus (e.g. public legal/medical
@@ -208,6 +217,69 @@ existing hybrid retrieval:
 Step 3 is the gold — you'll have a table showing "for which question type which technique wins, and
 whether it's worth the cost," which is exactly the kind of engineering decision senior interviewers
 look for.
+
+---
+
+## Phase 7 (Optional Extension) — Database as a Knowledge Base
+
+A knowledge base isn't only documents — a lot of an organization's truth lives in a **database**.
+This phase makes a SQLite DB a first-class source. The key insight (and the classic RAG mistake to
+avoid) is that database content splits into **two question types that need different machinery**:
+
+| Question type | Example | Right tool |
+|---------------|---------|-----------|
+| Content / semantic | "What do customers complain about?" | **Hybrid RAG** (chunk + embed the rows) |
+| Analytical / aggregation | "Total sales last year", "How many customers in the north?" | **Text-to-SQL** (generate `SELECT SUM(...)`, run it) |
+
+Chunking **cannot** answer the aggregation question: retrieval only pulls the top-k chunks, so it can
+never `SUM` thousands of rows, and an LLM adding numbers from text is unreliable. So you route each:
+
+1. **Ingestion (RAG path)** — a read-only `SELECT` pulls rows; turn **1 row = 1 document** (source
+   label `kb:<id>` for traceable citations) and run them through the *existing* chunk→embed→store
+   pipeline. DB rows become just another `source` — no new retrieval code.
+2. **Text-to-SQL path** — analytical questions are auto-detected by the router (markers like
+   *total / how many / average / per year* + Thai equivalents) and answered live: introspect the
+   schema → LLM writes one `SELECT` → **validate it's a single read-only query** → execute → phrase
+   the answer. The **executed SQL + result rows are the citation** — transparent and re-runnable.
+
+### Safety Is Layered (the part interviewers probe)
+
+Letting an LLM write SQL against your data is scary unless you box it in:
+
+- The SQLite file is opened **read-only** (`mode=ro` URI).
+- The generated SQL is rejected unless it's a **single statement** starting with `SELECT`/`WITH`,
+  with no `INSERT/UPDATE/DELETE/DROP/PRAGMA/…`; a row `LIMIT` is always enforced.
+- A rejected query yields *"I don't know"*, never a guess.
+- Privacy still applies — a sensitive query keeps SQL generation on the local model.
+
+### Scaling It Beyond a Demo (where the engineering judgment shows)
+
+The same way the main project shows judgment via eval tables, this path shows it via three scaling
+levers — each with a clear *what / how / why*:
+
+- **Swappable storage engine** (`SQL_KB_BACKEND`) — SQLite (default) ↔ DuckDB (columnar). DuckDB
+  pushes aggregations down for analytics-scale tables; introspection via `information_schema`.
+  Mirrors the `LOCAL_BACKEND` swap pattern.
+- **Runtime cost guards** — a wall-clock timeout aborts a runaway query on both engines, plus a
+  SQLite scan-op budget as a rows-scanned proxy. A trip → "I don't know", never a hung request.
+- **Schema retrieval** — on a wide schema, rank tables by lexical overlap + bge-m3 embedding cosine,
+  fused with **RRF**, and send only the top-k tables' DDL to the prompt. The hybrid-retrieval idea
+  reused for schema selection.
+
+### How to Extend the Existing Project
+
+Like GraphRAG, you don't rip anything out — it's another **answer path** chosen by the router:
+
+1. Add `ingest_sql.py` (reuses the existing storage pipeline) for the RAG path.
+2. Add a Text-to-SQL module: schema introspection → SQL generation → `safe_select` validation →
+   execution → cited NL answer. Wire the router to send analytical questions here.
+3. **Reuse the eval idea** — measure *execution accuracy* (does the generated query's result match a
+   hand-written reference query's?), the standard Text-to-SQL metric, alongside latency, SQL-gen
+   tokens, schema-narrowing, and cost-guard aborts.
+
+Step 3 is again the gold: a number that proves the SQL path works ("6/6 execution accuracy on the
+demo set"), plus operational metrics that prove the scaling levers do something — not just "it
+looks right."
 
 ---
 

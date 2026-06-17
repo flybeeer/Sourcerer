@@ -20,27 +20,33 @@
 ## สถาปัตยกรรมเป้าหมาย
 
 ```
-                    ┌─────────────────────────────────────┐
-   เอกสาร ──────►   │  Ingestion: chunk + embed + index    │
- (PDF/MD/HTML)      └──────────────┬──────────────────────┘
-                                   ▼
-                    ┌─────────────────────────────────────┐
-   คำถามผู้ใช้ ──►   │  Hybrid Retrieval                    │
-                    │  vector (pgvector) + BM25 + reranker │
-                    └──────────────┬──────────────────────┘
-                                   ▼
-                    ┌─────────────────────────────────────┐
-                    │  Router: งานง่าย/อ่อนไหว → local      │
-                    │          งานยาก → API (frontier)     │
-                    └──────────────┬──────────────────────┘
-                                   ▼
-                    ┌─────────────────────────────────────┐
-                    │  Generation + citations              │
-                    └──────────────┬──────────────────────┘
-                                   ▼
-                    ┌─────────────────────────────────────┐
-                    │  Eval harness + logging/observability│
-                    └─────────────────────────────────────┘
+   เอกสาร (PDF/MD/HTML) ─┐
+                         ├─►  Ingestion: chunk + embed + index → pgvector + BM25
+   แถวจาก DB (SQLite) ───┘    (Phase 7: 1 แถว = 1 doc, ใช้ pipeline เดิม)
+
+
+   คำถามผู้ใช้ ──►  ┌─────────────────────────────────────────────┐
+                    │  Query classifier — เลือกเส้นตามชนิดคำถาม    │
+                    ├─────────────────────────────────────────────┤
+                    │  เชิงวิเคราะห์? → Text-to-SQL (Phase 7)       │
+                    │     schema → SELECT → validate → run → cite  │
+                    │  ภาพรวม?       → GraphRAG global (Phase 6)    │
+                    │  อื่นๆ          → Hybrid Retrieval (ค่าเริ่มต้น)│
+                    │     vector (pgvector) + BM25 + reranker      │
+                    └──────────────────────┬──────────────────────┘
+                                           ▼
+                    ┌─────────────────────────────────────────────┐
+                    │  Router: งานง่าย/อ่อนไหว → local            │
+                    │          งานยาก → API (frontier)            │
+                    └──────────────────────┬──────────────────────┘
+                                           ▼
+                    ┌─────────────────────────────────────────────┐
+                    │  Generation + citations                     │
+                    └──────────────────────┬──────────────────────┘
+                                           ▼
+                    ┌─────────────────────────────────────────────┐
+                    │  Eval harness + logging/observability       │
+                    └─────────────────────────────────────────────┘
 ```
 
 ### ตัวเลือกเทคโนโลยีแต่ละชั้น
@@ -57,6 +63,9 @@
 | Embedding | **bge-m3** หรือ OpenAI embeddings | เลือกที่รัน local ได้เพื่อความสอดคล้องกับธีม |
 | Backend/API | **FastAPI** | มาตรฐาน Python สำหรับ serve |
 | Frontend | Streamlit (เร็ว) หรือ Next.js (โชว์ฝีมือ) | แล้วแต่เวลา |
+| Database source *(Phase 7)* | **SQLite** (read-only) → **DuckDB** (columnar) | ใช้ฐานข้อมูลเป็นแหล่งความรู้ได้ด้วย — SQLite ไม่ต้องตั้งค่าสำหรับ demo, DuckDB push aggregation ลงได้เมื่อข้อมูลใหญ่ระดับ analytics สลับผ่าน `SQL_KB_BACKEND` (รูปแบบเดียวกับ `LOCAL_BACKEND`) |
+| Text-to-SQL *(Phase 7)* | **Local LLM** → read-only `SELECT` ที่ validate แล้ว | คำถามเชิงวิเคราะห์/รวมยอดที่ chunking ตอบไม่ได้ (เช่น `SUM` หลายพันแถว) — SQL ที่รัน + แถวผลลัพธ์ = citation |
+| Schema retrieval *(Phase 7)* | **bge-m3 + lexical → RRF** | schema กว้างๆ ส่งเฉพาะตารางที่เกี่ยวเข้า prompt — เอาแนวคิด hybrid retrieval มาใช้กับการเลือก schema |
 
 > เลือก dataset ที่ "ตอบยากด้วย ChatGPT ทั่วไป" เช่น เอกสาร internal นโยบายบริษัท, คู่มือเทคนิคเฉพาะทาง, หรือ corpus เปิดสักชุด (เช่น เอกสารกฎหมาย/การแพทย์ที่เปิดสาธารณะ) ยิ่งเฉพาะทางยิ่งโชว์คุณค่าของ RAG
 
@@ -183,6 +192,49 @@ GraphRAG เต็มรูปแบบ **แพง** ขั้น indexing เ�
 3. **เอา eval harness จาก Phase 3 มาวัดเทียบ** ว่า GraphRAG ดีกว่า hybrid RAG บนคำถาม "ภาพรวม" จริงไหม และแพงกว่าแค่ไหน
 
 ข้อ 3 นี่แหละคือทอง — คุณจะมีตารางที่โชว์ว่า "บนคำถามประเภทไหน เทคนิคไหนชนะ และคุ้มต้นทุนไหม" ซึ่งเป็นการตัดสินใจเชิงวิศวกรรมที่คนจ้างงานระดับ senior มองหา
+
+---
+
+## Phase 7 (ทางเลือกต่อยอด) — ใช้ฐานข้อมูลเป็น Knowledge Base
+
+knowledge base ไม่ได้มีแค่เอกสาร — ความจริงขององค์กรจำนวนมากอยู่ใน **ฐานข้อมูล** phase นี้ทำให้ SQLite DB เป็นแหล่งความรู้ระดับ first-class จุดสำคัญ (และเป็นกับดัก RAG คลาสสิกที่ต้องเลี่ยง) คือ เนื้อหาในฐานข้อมูลแยกเป็น **คำถาม 2 ชนิดที่ต้องใช้กลไกคนละแบบ**:
+
+| ชนิดคำถาม | ตัวอย่าง | เครื่องมือที่ถูก |
+|----------|---------|----------------|
+| เนื้อหา / semantic | "ลูกค้าบ่นเรื่องอะไรบ้าง" | **Hybrid RAG** (chunk + embed แถวข้อมูล) |
+| เชิงวิเคราะห์ / รวมยอด | "ยอดขายปีที่แล้วรวมเท่าไหร่", "ลูกค้าภาคเหนือกี่ราย" | **Text-to-SQL** (สร้าง `SELECT SUM(...)` แล้วรัน) |
+
+chunking **ตอบคำถามรวมยอดไม่ได้**: retrieval ดึงแค่ top-k chunks จึงไม่มีทาง `SUM` ข้อมูลหลายพันแถว และการให้ LLM บวกเลขจากข้อความก็ไม่น่าเชื่อถือ จึงต้อง route แต่ละชนิด:
+
+1. **Ingestion (เส้น RAG)** — ใช้ read-only `SELECT` ดึงแถว, ทำ **1 แถว = 1 document** (label `kb:<id>` เพื่อ citation ที่ trace ได้) แล้วส่งผ่าน pipeline chunk→embed→store *เดิม* แถวจาก DB กลายเป็นอีก `source` หนึ่ง — ไม่ต้องเขียน retrieval ใหม่
+2. **เส้น Text-to-SQL** — คำถามเชิงวิเคราะห์ถูก auto-detect โดย router (markers เช่น *total / how many / average / per year* + คำไทยอย่าง ยอดรวม / กี่ / เฉลี่ย) แล้วตอบสด: introspect schema → LLM เขียน `SELECT` หนึ่งคำสั่ง → **validate ว่าเป็น read-only คำสั่งเดียว** → execute → เรียบเรียงคำตอบ **SQL ที่รัน + แถวผลลัพธ์ คือ citation** — โปร่งใสและรันซ้ำได้
+
+### ความปลอดภัยเป็นชั้นๆ (จุดที่ผู้สัมภาษณ์ชอบเจาะ)
+
+การให้ LLM เขียน SQL ยิงใส่ข้อมูลคุณน่ากลัว ถ้าไม่ล้อมกรอบ:
+
+- เปิดไฟล์ SQLite แบบ **read-only** (`mode=ro` URI)
+- SQL ที่สร้างจะถูกปฏิเสธ ยกเว้นเป็น **คำสั่งเดียว** ที่ขึ้นต้นด้วย `SELECT`/`WITH` และไม่มี `INSERT/UPDATE/DELETE/DROP/PRAGMA/…`; บังคับ `LIMIT` เสมอ
+- คำสั่งที่ถูกปฏิเสธ → ตอบ *"ไม่ทราบ"* ไม่เดามั่ว
+- privacy ยังคงทำงาน — คำถามอ่อนไหวจะเก็บการสร้าง SQL ไว้ที่ local model
+
+### การ scale ให้เกินระดับ demo (จุดที่โชว์ engineering judgment)
+
+แบบเดียวกับที่ตัวโปรเจกต์หลักโชว์วุฒิภาวะผ่านตาราง eval เส้นนี้โชว์ผ่าน 3 คันโยกการ scale แต่ละอันมี *อะไร / อย่างไร / ทำไม* ชัด:
+
+- **Storage engine สลับได้** (`SQL_KB_BACKEND`) — SQLite (ค่าเริ่มต้น) ↔ DuckDB (columnar) DuckDB push aggregation ลงสำหรับตารางระดับ analytics; introspect ผ่าน `information_schema` รูปแบบเดียวกับการสลับ `LOCAL_BACKEND`
+- **Runtime cost guards** — timeout เชิง wall-clock abort query ที่วิ่งหนีบนทั้งสอง engine + scan-op budget ของ SQLite เป็น proxy ของจำนวนแถวที่สแกน เมื่อชนเพดาน → ตอบ "ไม่ทราบ" ไม่ค้าง
+- **Schema retrieval** — schema กว้าง จัดอันดับตารางด้วย lexical overlap + bge-m3 cosine, fuse ด้วย **RRF** แล้วส่งเฉพาะ DDL ของตาราง top-k เข้า prompt — เอาแนวคิด hybrid retrieval มาใช้กับการเลือก schema
+
+### วิธีต่อยอดเข้ากับโปรเจกต์เดิม
+
+เหมือน GraphRAG คือไม่ต้องรื้อของเดิม — เป็นอีก **เส้นทางตอบ** ที่ router เลือก:
+
+1. เพิ่ม `ingest_sql.py` (reuse pipeline เก็บข้อมูลเดิม) สำหรับเส้น RAG
+2. เพิ่มโมดูล Text-to-SQL: introspect schema → สร้าง SQL → validate ด้วย `safe_select` → execute → ตอบพร้อม citation แล้วต่อ router ให้ส่งคำถามเชิงวิเคราะห์มาเส้นนี้
+3. **เอาแนวคิด eval มาใช้** — วัด *execution accuracy* (ผลของ query ที่สร้างตรงกับ reference query ที่เขียนมือไหม) ซึ่งเป็น metric มาตรฐานของ Text-to-SQL พร้อมกับ latency, tokens ที่ใช้สร้าง SQL, การแคบ schema, และจำนวน cost-guard abort
+
+ข้อ 3 คือทองอีกครั้ง: ตัวเลขที่พิสูจน์ว่าเส้น SQL ทำงาน ("execution accuracy 6/6 บน demo set") บวก operational metrics ที่พิสูจน์ว่าคันโยก scale ทำงานจริง — ไม่ใช่แค่ "ดูแล้วน่าจะถูก"
 
 ---
 
