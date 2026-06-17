@@ -172,6 +172,17 @@ The reranker then lifts ranking from **MRR 0.95 → 1.00**. The numbers behind b
 `RETRIEVAL_MODE` (`hybrid` | `vector`) keeps the vector-only path available for A/B comparison;
 reranking is toggled per request (`rerank`) and the backend chosen via `RERANKER_TYPE`.
 
+> **What if the vector store isn't Postgres?** BM25 here comes *free* because Postgres holds the
+> vectors (pgvector) **and** the keyword index (FTS) in one place — a key reason pgvector was
+> chosen. Move the vectors to a dedicated vector DB and you need the keyword leg from elsewhere.
+> Three options, cheapest-to-operate first: **(1)** a vector DB with hybrid built in — Weaviate
+> (native BM25), Qdrant / Milvus / Pinecone (sparse vectors like SPLADE/BM42, i.e. BM25-style
+> keyword importance stored *as* a vector) — keeps it one system; **(2)** a dedicated search
+> engine — Elasticsearch / OpenSearch (industry-standard BM25; OpenSearch also does vectors);
+> **(3)** an in-process BM25 lib for small corpora — `bm25s`, `rank_bm25`, Tantivy. **The RRF
+> fusion + reranker stages don't change either way** — they just consume "two ranked lists," so
+> only the *source* of the keyword list changes.
+
 ## Evaluation Results ⭐
 
 RAG fails in **two independent ways** — it can fetch the wrong context, *or* fetch the right

@@ -69,6 +69,8 @@
 
 > เลือก dataset ที่ "ตอบยากด้วย ChatGPT ทั่วไป" เช่น เอกสาร internal นโยบายบริษัท, คู่มือเทคนิคเฉพาะทาง, หรือ corpus เปิดสักชุด (เช่น เอกสารกฎหมาย/การแพทย์ที่เปิดสาธารณะ) ยิ่งเฉพาะทางยิ่งโชว์คุณค่าของ RAG
 
+> **หมายเหตุ — keyword search เมื่อ vector store ไม่ใช่ Postgres.** ที่นี่ BM25 ได้มาฟรีเพราะ Postgres เก็บทั้ง vector (pgvector) และ FTS keyword index ในที่เดียว ถ้าย้ายไปใช้ vector DB เฉพาะทาง ให้หา keyword leg จาก: (1) vector DB ที่มี hybrid ในตัว — Weaviate (BM25 native) หรือ Qdrant/Milvus/Pinecone (sparse vector อย่าง SPLADE/BM42 — เก็บ "ความสำคัญของคำ" แบบ BM25 *เป็น* vector คงความเป็นระบบเดียว); (2) search engine — Elasticsearch/OpenSearch; หรือ (3) library in-process (`bm25s`, `rank_bm25`) สำหรับ corpus เล็ก ขั้น RRF fusion + reranker ไม่ต้องเปลี่ยน — เปลี่ยนแค่ที่มาของ keyword list
+
 ---
 
 ## แบ่งเป็น 5 Phase

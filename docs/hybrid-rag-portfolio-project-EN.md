@@ -77,6 +77,14 @@ includes the three things that separate amateurs from professionals:
 > documents, domain-specific technical manuals, or a public corpus (e.g. public legal/medical
 > documents). The more specialized, the more it showcases the value of RAG.
 
+> **Note — keyword search when the vector store isn't Postgres.** BM25 is free here because
+> Postgres holds both the vectors (pgvector) and the FTS keyword index. If you swap in a dedicated
+> vector DB, get the keyword leg from: (1) a vector DB with hybrid built in — Weaviate (native
+> BM25) or Qdrant/Milvus/Pinecone (sparse vectors like SPLADE/BM42 — BM25-style keyword importance
+> stored *as* a vector, keeping it one system); (2) a search engine — Elasticsearch/OpenSearch;
+> or (3) an in-process lib (`bm25s`, `rank_bm25`) for small corpora. The RRF fusion + reranker
+> stages are unchanged — only the source of the keyword list differs.
+
 ---
 
 ## Broken into 5 Phases
