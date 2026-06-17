@@ -47,8 +47,14 @@ claim** or says *"I don't know"*. Two kinds of source:
 
 ## What Makes It Stand Out
 
-1. **Hybrid retrieval** — vector (pgvector) + keyword (BM25) → RRF fusion → reranker, not vector search alone.
-2. **Evaluation harness** — measurable proof the system works (recall@k, MRR, faithfulness), not "looks fine to me".
+1. **Hybrid retrieval** — semantic vector search (pgvector) **and** exact-keyword BM25 run in
+   parallel, fused with RRF, then re-ordered by a cross-encoder reranker. The two halves cover
+   each other's blind spots — vector misses exact terms/codes, keyword misses synonyms — so it
+   beats vector search alone ([details](#hybrid-retrieval)).
+2. **Evaluation harness** — measures the two halves of RAG separately: *retrieval* (recall@k,
+   MRR, hit rate — deterministic) and *generation* (faithfulness, answer relevancy — via an
+   LLM-as-judge). Every config is compared in a table, so "better" is a number, not "looks fine
+   to me" ([details](#evaluation-results-)).
 3. **Hybrid routing** — easy/sensitive/high-volume queries → local LLM; hard queries → frontier API, with measured cost savings.
 
 ## Architecture
@@ -113,7 +119,84 @@ claim** or says *"I don't know"*. Two kinds of source:
 | Embeddings       | bge-m3                          | Strong multilingual local embeddings; keeps the whole retrieval stack self-hosted and on-theme. |
 | Backend          | FastAPI                         | Async Python standard for serving; auto OpenAPI docs at `/docs`. |
 
+## Hybrid Retrieval
+
+Two retrievers with **complementary blind spots** run in parallel, get fused, then re-ranked —
+so the context handed to the LLM is both *complete* (nothing relevant missed) and *clean*
+(the best chunks on top):
+
+```
+                      ┌─ vector search (pgvector) ──┐  semantic / meaning
+  query ─▶ embed ─────┤   bge-m3 · cosine top-N     │  ("วันลา" ≈ "PTO policy")
+        │             └─────────────────────────────┘
+        │             ┌─ keyword search (BM25/FTS) ─┐  exact terms / codes
+        └─────────────┤   Postgres tsvector top-N   │  ("Sev-1", error codes, names)
+                      └─────────────────────────────┘
+                                   │
+                                   ▼
+                       ┌─ RRF fusion ───────────────┐  rank-based merge, no score
+                       │  score = Σ 1/(k + rank)     │  normalization needed
+                       └────────────┬───────────────┘
+                                    ▼
+                       ┌─ reranker (cross-encoder) ──┐  scores (query, chunk) jointly
+                       │  MiniLM · ~13 ms/query      │  → precise final ordering
+                       └────────────┬───────────────┘
+                                    ▼
+                       top-k chunks ─▶ relevance floor ─▶ LLM (with [n] citations)
+```
+
+**Step by step:**
+
+1. **Vector search (pgvector).** The query is embedded with `bge-m3`; nearest chunks by cosine
+   distance. Strong on *meaning* — finds *"PTO policy"* for a query about *"วันลาพักร้อน"* with no
+   shared words. Weak on exact tokens (acronyms, codes, names) — embeddings blur them.
+2. **Keyword search (BM25, Postgres FTS).** Classic term-frequency scoring over a generated
+   `tsvector` column. The mirror image: nails *exact* terms vector misses (*"Sev-1"*, error
+   codes), but blind to synonyms.
+3. **RRF fusion.** Vector distances and BM25 scores live on **different scales** — you can't just
+   add them. Reciprocal Rank Fusion sidesteps this by combining *ranks*, not raw scores:
+   `score(chunk) = Σ 1/(k + rank)` (k≈60) across both lists. Chunks ranked high by *both*
+   retrievers float to the top; no per-query normalization needed. (Steps 1–3 maximize **recall** —
+   don't let the right chunk fall out.)
+4. **Reranker (cross-encoder).** A small cross-encoder (`ms-marco-MiniLM`) scores each
+   *(query, chunk)* pair **together** — far more precise than the first stage, which scored query
+   and chunk separately. This maximizes **precision** — the right chunk to rank #1 — at ~13 ms/query.
+5. **Relevance floor → LLM.** The top-k survivors pass a calibrated `MIN_RELEVANCE_SCORE` floor
+   (drops weakly-relevant chunks; see [Guardrails](#guardrails)) before generation.
+
+**Why not vector-only?** On a clean corpus the gap is small, but the moment the corpus has *noise*
+the keyword leg earns its keep: when an unrelated Thai PDF polluted the top-k, **vector-only
+faithfulness collapsed to ~0.20** while hybrid's BM25 signal suppressed the junk and held quality.
+The reranker then lifts ranking from **MRR 0.95 → 1.00**. The numbers behind both claims are next.
+
+`RETRIEVAL_MODE` (`hybrid` | `vector`) keeps the vector-only path available for A/B comparison;
+reranking is toggled per request (`rerank`) and the backend chosen via `RERANKER_TYPE`.
+
 ## Evaluation Results ⭐
+
+RAG fails in **two independent ways** — it can fetch the wrong context, *or* fetch the right
+context and still write a bad answer — so the harness measures each separately:
+
+```
+              ┌─ RETRIEVAL — "did it fetch the right chunks?" ──────────────┐
+              │  recall@k   relevant doc somewhere in top-k? (did we miss?) │
+  eval set ─▶ │  MRR        what rank is it? (1/rank — is it on top?)       │  deterministic,
+ (Q + gold    │  hit rate   any relevant chunk at all? (coarse 0/1)         │  trustworthy
+  answer)     └────────────────────────────────────────────────────────────┘
+              ┌─ GENERATION — "was the answer any good?" ───────────────────┐
+              │  faithfulness    grounded in context, not hallucinated?     │  LLM-as-judge
+              │  answer relevancy actually answers the question asked?       │  (noisy at small N)
+              └────────────────────────────────────────────────────────────┘
+```
+
+- **Retrieval metrics are deterministic** — pure rank math against a known-correct doc, so they're
+  the trustworthy signal. **MRR** is the sharpest (it rewards ranking the right doc *first*, where
+  recall only asks if it's *present*).
+- **Generation metrics use an LLM judge** (`qwen2.5:7b`) — necessary for "is this grounded?", but
+  **high-variance at 10 questions** (see the caveat below the reranker table). Treat them as
+  directional until the set grows to 50–100 items.
+- **The deliverable is the *comparison*** — vector vs hybrid vs hybrid+rerank side by side. That's
+  what turns "I think it's better" into "MRR went 0.95 → 1.00."
 
 Measured with the Phase 3 harness on a 10-question eval set over the synthetic
 `eval/corpus` (12 docs). Generator `qwen2.5:3b`, LLM judge `qwen2.5:7b`,
