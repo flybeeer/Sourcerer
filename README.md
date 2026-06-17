@@ -1,7 +1,9 @@
 # Sourcerer
 
-> A hybrid RAG knowledge assistant that answers from your documents — **with sources**.
-> The name plays on *source* + *sorcerer*: every answer is grounded in cited sources.
+> A hybrid RAG knowledge assistant that answers from your documents **and your
+> databases** — **with sources**.
+> The name plays on *source* + *sorcerer*: every answer is grounded in cited sources —
+> a cited passage from a doc, or the exact SQL + rows behind a number.
 
 <!-- TODO: badges — build, license, python version -->
 
@@ -31,11 +33,17 @@ answered, why, and what it cost:
 
 ## The Problem
 
-Plain ChatGPT can't answer questions about *your* internal documents — and when
-it tries, it guesses. Sourcerer answers strictly from an indexed corpus (the demo
-ships a synthetic company handbook in `eval/corpus/`: PTO, on-call, incident
-severity, SLAs, security policy…) and **cites every claim** or says *"I don't
-know"*. Swap in your own PDFs/Markdown via `scripts/ingest.py`.
+Plain ChatGPT can't answer questions about *your* internal knowledge — and when
+it tries, it guesses. Sourcerer answers strictly from your sources and **cites every
+claim** or says *"I don't know"*. Two kinds of source:
+
+- **Documents** — an indexed corpus (the demo ships a synthetic company handbook in
+  `eval/corpus/`: PTO, on-call, incident severity, SLAs, security policy…). Swap in
+  your own PDFs/Markdown via `scripts/ingest.py`.
+- **Databases** — point it at a SQLite DB and it answers from rows too: content
+  questions retrieve ingested rows, while analytical/aggregation questions
+  (*"total sales last year"*) are answered live with generated, validated read-only
+  SQL — the query + result rows are the citation. See [Phase 7](#database-as-a-knowledge-base-phase-7--optional).
 
 ## What Makes It Stand Out
 
@@ -46,32 +54,43 @@ know"*. Swap in your own PDFs/Markdown via `scripts/ingest.py`.
 ## Architecture
 
 ```
-                 ┌──────────────────────────────────────────────┐
-  Documents ───▶ │  Ingestion:  load → chunk → embed (bge-m3)    │
- (PDF / MD)      │              → store in pgvector + FTS index  │
-                 └───────────────────────┬──────────────────────┘
-                                         ▼
-                 ┌──────────────────────────────────────────────┐
-  Query ───────▶ │  Guardrail: prompt-injection screen          │
-                 ├──────────────────────────────────────────────┤
-                 │  Hybrid Retrieval                            │
-                 │    vector (pgvector)  ∥  BM25 (Postgres FTS) │
-                 │        └──── RRF fusion ────┘ → reranker      │
-                 ├──────────────────────────────────────────────┤
-                 │  Guardrail: relevant context? else "I don't  │
-                 │             know" (no guessing)              │
-                 ├──────────────────────────────────────────────┤
-                 │  Router:  easy/sensitive → local LLM         │
-                 │           hard/complex   → frontier API      │
-                 ├──────────────────────────────────────────────┤
-                 │  Generation with inline [n] citations        │
-                 └───────────────────────┬──────────────────────┘
-                                         ▼
-                 ┌──────────────────────────────────────────────┐
-                 │  Observability: structured per-query trace   │
-                 │  (retrieval · route · tokens · latency · $)  │
-                 │  + query_log table  ·  Eval harness          │
-                 └──────────────────────────────────────────────┘
+  Documents (PDF / MD) ─┐
+                        ├─▶ Ingestion: load → chunk → embed (bge-m3) → pgvector + FTS index
+  DB rows  (SQLite) ────┘   (ingest_sql.py: 1 row = 1 doc, source = kb:<id> — same pipeline)
+
+
+  Query ─▶ ┌──────────────────────────────────────────────────────────────┐
+           │  Guardrail: prompt-injection screen                          │
+           └───────────────────────────────┬──────────────────────────────┘
+                                           ▼
+           ┌──── Query classifier — routes by question shape (in order) ───┐
+           │                                                               │
+           │  analytical?  ──yes──▶  Text-to-SQL  (Phase 7)                │
+           │  (total / how many /     schema introspect → LLM writes SELECT│
+           │   avg / ยอดรวม / กี่ …)   → safe_select (1 read-only SELECT,   │
+           │      │ no                  enforced LIMIT) → run on SQLite     │
+           │      │                     → cited answer (SQL + rows = cite)  │
+           │      ▼                                                        │
+           │  overview?    ──yes──▶  GraphRAG global  (Phase 6 · opt.)     │
+           │      │ no                 map-reduce over community summaries  │
+           │      ▼                                                        │
+           │  Hybrid Retrieval  (default)                                  │
+           │    vector (pgvector) ∥ BM25 (Postgres FTS) → RRF → reranker   │
+           │    Guardrail: relevant context? else "I don't know"          │
+           └───────────────────────────────┬──────────────────────────────┘
+                                           ▼
+           ┌──────────────────────────────────────────────────────────────┐
+           │  Router:  easy/sensitive → local LLM                         │
+           │           hard/complex   → frontier API                      │
+           ├──────────────────────────────────────────────────────────────┤
+           │  Generation with inline [n] citations                        │
+           └───────────────────────────────┬──────────────────────────────┘
+                                           ▼
+           ┌──────────────────────────────────────────────────────────────┐
+           │  Observability: structured per-query trace                   │
+           │  (retrieval · route · tokens · latency · $)                  │
+           │  + query_log table  ·  Eval harness                          │
+           └──────────────────────────────────────────────────────────────┘
 
   Inference behind one LLM client wrapper:  Ollama (dev) ⇄ vLLM (prod) · frontier API
 ```
@@ -522,13 +541,38 @@ python scripts/sql_eval.py                     # Text-to-SQL execution accuracy
 
 **Eval — the point, as always:** `scripts/sql_eval.py` measures *execution accuracy*
 (does the generated query's result match a hand-written reference query's result?) —
-the standard text-to-SQL metric — over `eval/sql_eval_set.jsonl`, alongside latency,
-SQL-gen tokens, prompt-schema narrowing, and cost-guard aborts.
+the standard text-to-SQL metric — over `eval/sql_eval_set.jsonl`, alongside the
+operational numbers the scaling work moves: end-to-end latency, SQL-gen tokens,
+prompt-schema narrowing, and cost-guard aborts.
 
-> 📈 **Scaling this path beyond a demo** — a swappable DuckDB (columnar) backend,
-> runtime cost guards (query timeout + scan budget), and schema retrieval (send only
-> the relevant tables to the prompt on a wide schema) — is written up, with the
-> *what / how / why* of each, in [`docs/sql-kb-scaling.md`](docs/sql-kb-scaling.md).
+| Metric (demo run)            | Value                                   |
+|------------------------------|-----------------------------------------|
+| Execution accuracy           | **6/6**                                 |
+| Latency (median)             | ~1 s                                    |
+| Prompt-schema narrowing      | 1/1 tables (no narrowing — 1-table DB)  |
+| Cost-guard aborts            | 0                                       |
+
+> Generator `qwen2.5` over the single-table demo sales DB (`scripts/build_sql_demo.py`).
+> Narrowing and guard aborts only show their value on a wide / large schema — see the
+> scaling doc below; the demo's job is to prove the path end-to-end.
+
+### Scaling this path beyond a demo
+
+Three pieces take the SQL path from a demo to analytics scale — each written up with
+the *what / how / why* in [`docs/sql-kb-scaling.md`](docs/sql-kb-scaling.md):
+
+- **Swappable storage backend (`SQL_KB_BACKEND`).** `sqlite` (default) or `duckdb`
+  (columnar) for analytics-scale tables — aggregations push down, introspection via
+  `information_schema`. Mirrors the `LOCAL_BACKEND` pattern; behind `sqlkb/backends.py`.
+- **Runtime cost guards.** A wall-clock `SQL_KB_TIMEOUT_S` aborts a runaway query on
+  both engines (SQLite progress-handler deadline; DuckDB watchdog interrupt), and a
+  SQLite-only `SQL_KB_MAX_SCAN_OPS` budgets VM ops as a rows-scanned proxy. A trip →
+  `QueryCostError` → *"I don't know"*, never a hung request.
+- **Schema retrieval (`SQL_KB_SCHEMA_TOP_K`).** On a wide schema, only the most
+  relevant tables go in the prompt instead of every table's DDL — ranked by lexical
+  overlap **+** bge-m3 embedding cosine, fused with **RRF** (the same hybrid idea as
+  document retrieval). `SQLExecution.prompt_tables` exposes the per-query count so the
+  eval can report the narrowing.
 
 ## Project Structure
 
