@@ -69,6 +69,8 @@ includes the three things that separate amateurs from professionals:
 | Embedding | **bge-m3** or OpenAI embeddings | Pick one that can run locally to stay consistent with the theme |
 | Backend/API | **FastAPI** | Python standard for serving |
 | Frontend | Streamlit (fast) or Next.js (shows craft) | Depends on your time budget |
+| Graph index *(Phase 6)* | **networkx** + modularity communities | Builds the entity/relationship graph and clusters it for whole-corpus "overview" questions; pure-Python, no graph DB to operate. The `[graphrag]` extra. |
+| Graph store *(Phase 6)* | **JSON file** → **Postgres + pgvector** | `GRAPHRAG_STORE`: JSON loads the whole graph in memory (small corpora); Postgres ranks community summaries via pgvector HNSW — O(k) reads at scale, reusing existing infra. |
 | Database source *(Phase 7)* | **SQLite** (read-only) → **DuckDB** (columnar) | Treat a database as a knowledge source too. SQLite is zero-setup for a demo; DuckDB pushes aggregations down at analytics scale. Swappable via `SQL_KB_BACKEND`, mirroring the `LOCAL_BACKEND` pattern. |
 | Text-to-SQL *(Phase 7)* | **Local LLM** → validated read-only `SELECT` | Analytical/aggregation questions chunking can't answer (e.g. `SUM` over thousands of rows). The executed SQL + result rows become the citation. |
 | Schema retrieval *(Phase 7)* | **bge-m3 + lexical → RRF** | On a wide schema, send only the most relevant tables to the prompt — the same hybrid-retrieval idea, applied to schema selection. |
@@ -76,6 +78,14 @@ includes the three things that separate amateurs from professionals:
 > Pick a dataset that is "hard to answer with plain ChatGPT" — e.g. internal company-policy
 > documents, domain-specific technical manuals, or a public corpus (e.g. public legal/medical
 > documents). The more specialized, the more it showcases the value of RAG.
+
+> **Note — keyword search when the vector store isn't Postgres.** BM25 is free here because
+> Postgres holds both the vectors (pgvector) and the FTS keyword index. If you swap in a dedicated
+> vector DB, get the keyword leg from: (1) a vector DB with hybrid built in — Weaviate (native
+> BM25) or Qdrant/Milvus/Pinecone (sparse vectors like SPLADE/BM42 — BM25-style keyword importance
+> stored *as* a vector, keeping it one system); (2) a search engine — Elasticsearch/OpenSearch;
+> or (3) an in-process lib (`bm25s`, `rank_bm25`) for small corpora. The RRF fusion + reranker
+> stages are unchanged — only the source of the keyword list differs.
 
 ---
 
