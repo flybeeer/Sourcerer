@@ -55,7 +55,11 @@ claim** or says *"I don't know"*. Two kinds of source:
    MRR, hit rate — deterministic) and *generation* (faithfulness, answer relevancy — via an
    LLM-as-judge). Every config is compared in a table, so "better" is a number, not "looks fine
    to me" ([details](#evaluation-results-)).
-3. **Hybrid routing** — easy/sensitive/high-volume queries → local LLM; hard queries → frontier API, with measured cost savings.
+3. **Hybrid routing** — routes on two axes: by *question shape* (analytical → Text-to-SQL,
+   whole-corpus/overview → [GraphRAG global](#graphrag-phase-6--optional), else → hybrid RAG) and by
+   *cost & privacy* (easy/sensitive/high-volume → local LLM; hard → frontier API). Measured cost
+   savings — and the same local-vs-API lever even applies *inside* GraphRAG's map-reduce (cheap
+   **map** stays local, the one expensive **reduce** can go to the API) ([details](#hybrid-routing)).
 
 ## Architecture
 
@@ -118,6 +122,8 @@ claim** or says *"I don't know"*. Two kinds of source:
 | Reranker         | cross-encoder / LLM listwise    | Re-scores fused candidates before generation. Small MiniLM cross-encoder is ~13 ms/query and matches the 568M bge here (see eval). |
 | Embeddings       | bge-m3                          | Strong multilingual local embeddings; keeps the whole retrieval stack self-hosted and on-theme. |
 | Backend          | FastAPI                         | Async Python standard for serving; auto OpenAPI docs at `/docs`. |
+| Graph index *(Phase 6)* | networkx + modularity communities | Builds the entity/relationship graph and clusters it into communities for whole-corpus "overview" questions vector RAG can't answer; pure-Python, no graph-DB to run. The `[graphrag]` extra. |
+| Graph store *(Phase 6)* | JSON file → Postgres + pgvector | `GRAPHRAG_STORE`: JSON loads the whole graph in memory (simple, inspectable, small corpora); Postgres ranks community summaries via pgvector HNSW — **O(k) reads** instead of O(whole graph) at scale, reusing the same Postgres + embedder. |
 
 ## Hybrid Retrieval
 
@@ -470,12 +476,18 @@ across all the docs?") — no single chunk contains the answer. GraphRAG adds a
    relationships from every chunk; entities are merged into a graph, clustered
    into **communities** (modularity), and each community gets an LLM-written
    **summary**. Artifacts persist as JSON under `GRAPHRAG_ROOT`.
-2. **Search** — **local** (entity-specific: match entities → gather their
-   subgraph → answer) and **global** (whole-corpus: *map-reduce* over community
-   summaries — score each community's relevance, then synthesize the helpful ones).
+2. **Search** — two modes exist in the module: **global** (whole-corpus: *map-reduce*
+   over community summaries — score each community's relevance, then synthesize the
+   helpful ones) and **local** (entity-specific: match entities → gather their subgraph
+   → answer). **Only `global` is wired into `/query`** — it's what the router and the
+   `route_override` graph options use; `local_search()` is implemented and importable but
+   not yet exposed on the endpoint (a hook for a future DRIFT-style local+global mode).
    Each community is traced back to its **source files** (community → entities →
    chunk origins), so a global answer cites e.g. *"community 0 · incident-severity.md,
    offices.md, support-slas.md"* — staying true to the "answer with sources" rule.
+   > ⚠️ Naming gotcha: the `graph-local` / `graph-api` route overrides **both run global
+   > search** — "local/api" there picks where the *reduce* step runs (local LLM vs frontier
+   > API), not local-vs-global search.
 3. **Router extension** — when `GRAPHRAG_ENABLED=true` and a query reads as an
    overview question (markers like *"main themes / overall / across all / ภาพรวม"*),
    `/query` takes GraphRAG **global**; specific questions fall through to hybrid.

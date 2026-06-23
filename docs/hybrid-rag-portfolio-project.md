@@ -63,6 +63,8 @@
 | Embedding | **bge-m3** หรือ OpenAI embeddings | เลือกที่รัน local ได้เพื่อความสอดคล้องกับธีม |
 | Backend/API | **FastAPI** | มาตรฐาน Python สำหรับ serve |
 | Frontend | Streamlit (เร็ว) หรือ Next.js (โชว์ฝีมือ) | แล้วแต่เวลา |
+| Graph index *(Phase 6)* | **networkx** + community แบบ modularity | สร้างกราฟ entity/relationship แล้วจัดกลุ่มเป็น community สำหรับคำถาม "ภาพรวมทั้ง corpus" ที่ vector RAG ตอบไม่ได้; เป็น Python ล้วน ไม่ต้องรัน graph DB เป็น `[graphrag]` extra |
+| Graph store *(Phase 6)* | **JSON file** → **Postgres + pgvector** | `GRAPHRAG_STORE`: JSON โหลดทั้งกราฟเข้า memory (corpus เล็ก); Postgres จัดอันดับ community summary ด้วย pgvector HNSW — O(k) reads เมื่อ scale ใช้ infra เดิม |
 | Database source *(Phase 7)* | **SQLite** (read-only) → **DuckDB** (columnar) | ใช้ฐานข้อมูลเป็นแหล่งความรู้ได้ด้วย — SQLite ไม่ต้องตั้งค่าสำหรับ demo, DuckDB push aggregation ลงได้เมื่อข้อมูลใหญ่ระดับ analytics สลับผ่าน `SQL_KB_BACKEND` (รูปแบบเดียวกับ `LOCAL_BACKEND`) |
 | Text-to-SQL *(Phase 7)* | **Local LLM** → read-only `SELECT` ที่ validate แล้ว | คำถามเชิงวิเคราะห์/รวมยอดที่ chunking ตอบไม่ได้ (เช่น `SUM` หลายพันแถว) — SQL ที่รัน + แถวผลลัพธ์ = citation |
 | Schema retrieval *(Phase 7)* | **bge-m3 + lexical → RRF** | schema กว้างๆ ส่งเฉพาะตารางที่เกี่ยวเข้า prompt — เอาแนวคิด hybrid retrieval มาใช้กับการเลือก schema |
