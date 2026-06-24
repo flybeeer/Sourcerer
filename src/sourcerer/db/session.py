@@ -97,6 +97,8 @@ def init_schema() -> None:
             "cost_usd DOUBLE PRECISION NOT NULL DEFAULT 0",
             "router_reason TEXT",
             "difficulty DOUBLE PRECISION",
+            # Phase 10a — principal that issued the query (NULL = governance off).
+            "principal TEXT",
         ):
             conn.execute(f"ALTER TABLE query_log ADD COLUMN IF NOT EXISTS {ddl}")
 

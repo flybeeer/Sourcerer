@@ -6,10 +6,11 @@ import logging
 import time
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.responses import FileResponse
 
 from sourcerer import corpus
+from sourcerer import governance
 from sourcerer.api.schemas import (
     CitationModel,
     DeleteResponse,
@@ -51,7 +52,11 @@ def health() -> dict[str, str]:
 
 
 def _graph_global_query(
-    request: QueryRequest, settings, reduce_with_api: bool, reason_prefix: str
+    request: QueryRequest,
+    settings,
+    reduce_with_api: bool,
+    reason_prefix: str,
+    principal: str | None = None,
 ) -> QueryResponse:
     """Answer a whole-corpus question via GraphRAG global search (Phase 6).
 
@@ -124,6 +129,7 @@ def _graph_global_query(
         cost_usd=cost_usd,
         router_reason=reason,
         difficulty=difficulty,
+        principal=principal,
     )
     trace.log_query_event(
         query=request.query,
@@ -139,6 +145,7 @@ def _graph_global_query(
         latency_ms=latency_ms,
         answered=answered,
         guardrail=None if answered else "no_relevant_context",
+        principal=principal,
     )
     return QueryResponse(
         answer=result.text,
@@ -155,7 +162,9 @@ def _graph_global_query(
     )
 
 
-def _text_to_sql_query(request: QueryRequest, settings) -> QueryResponse:
+def _text_to_sql_query(
+    request: QueryRequest, settings, principal: str | None = None
+) -> QueryResponse:
     """Answer an analytical question by generating + running SQL (Phase 7, Path B).
 
     The router decision still applies (privacy keeps sensitive queries local); the
@@ -202,6 +211,7 @@ def _text_to_sql_query(request: QueryRequest, settings) -> QueryResponse:
         cost_usd=cost_usd,
         router_reason=reason,
         difficulty=decision.difficulty,
+        principal=principal,
     )
     trace.log_query_event(
         query=request.query,
@@ -217,6 +227,7 @@ def _text_to_sql_query(request: QueryRequest, settings) -> QueryResponse:
         latency_ms=latency_ms,
         answered=answered,
         guardrail=None if answered else "no_safe_sql",
+        principal=principal,
     )
     return QueryResponse(
         answer=answer.text,
@@ -234,9 +245,17 @@ def _text_to_sql_query(request: QueryRequest, settings) -> QueryResponse:
 
 
 @router.post("/query", response_model=QueryResponse)
-def query(request: QueryRequest) -> QueryResponse:
+def query(request: QueryRequest, http_request: Request) -> QueryResponse:
     """Retrieve relevant chunks and answer the question with citations."""
     settings = get_settings()
+
+    # Phase 10a: resolve who is asking from the principal header (None when
+    # governance is disabled). Recorded on the trace/query_log only for now —
+    # the Cerbos gate that *enforces* it arrives in 10b+.
+    principal_obj = governance.resolve_principal(
+        http_request.headers.get(settings.principal_header), settings
+    )
+    principal = principal_obj.id if principal_obj else None
 
     # Guardrail 1: screen the input for obvious prompt injection before any work.
     if settings.enable_injection_check:
@@ -257,6 +276,7 @@ def query(request: QueryRequest) -> QueryResponse:
                 latency_ms=0,
                 answered=False,
                 guardrail="prompt_injection",
+                principal=principal,
             )
             raise HTTPException(
                 status_code=400,
@@ -275,7 +295,7 @@ def query(request: QueryRequest) -> QueryResponse:
     )
     if forced_sql or auto_sql:
         if Path(settings.sql_kb_path).exists():
-            return _text_to_sql_query(request, settings)
+            return _text_to_sql_query(request, settings, principal=principal)
         if forced_sql:
             raise HTTPException(
                 status_code=400,
@@ -303,7 +323,9 @@ def query(request: QueryRequest) -> QueryResponse:
             else:
                 reduce_with_api = settings.graphrag_reduce_with_api
                 prefix = "overview/whole-corpus question → GraphRAG global search"
-            return _graph_global_query(request, settings, reduce_with_api, prefix)
+            return _graph_global_query(
+                request, settings, reduce_with_api, prefix, principal=principal
+            )
         if forced_graph:
             raise HTTPException(
                 status_code=400,
@@ -372,6 +394,7 @@ def query(request: QueryRequest) -> QueryResponse:
         cost_usd=cost_usd,
         router_reason=decision.reason,
         difficulty=decision.difficulty,
+        principal=principal,
     )
     # Structured trace (machine-readable companion to the query_log row).
     trace.log_query_event(
@@ -388,6 +411,7 @@ def query(request: QueryRequest) -> QueryResponse:
         latency_ms=latency_ms,
         answered=answered,
         guardrail=None if answered else "no_relevant_context",
+        principal=principal,
     )
 
     return QueryResponse(

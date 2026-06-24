@@ -147,6 +147,20 @@ class Settings(BaseSettings):
     # default (local keeps it free/private); turn on for harder schemas. Needs a key.
     sql_kb_generate_with_api: bool = False
 
+    # ---------- Data governance (Phase 10, optional) ----------
+    # Authorize at retrieval/execution time so forbidden chunks/rows/communities
+    # never enter the candidate set. Sub-phase 10a wires only the catalog (asset
+    # metadata) and the principal identity on each request — nothing is enforced
+    # yet; the Cerbos gate (PlanResources→WHERE, SQLGlot+CheckResources) lands in
+    # 10b+. Mirrors the LOCAL_BACKEND / SQL_KB_BACKEND swap pattern.
+    governance_enabled: bool = False
+    # Where asset metadata (classification/owner_team/pii_tags) lives.
+    catalog_backend: str = "local"  # local (asset_catalog in Postgres) | openmetadata (prod swap)
+    # Cerbos PDP sidecar endpoint — used from 10b on; blank = gate not wired.
+    cerbos_endpoint: str = ""
+    # Request header carrying the principal id (stub IdP; JWT claims later).
+    principal_header: str = "X-Principal"
+
     @property
     def dsn(self) -> str:
         """Build the Postgres connection string from parts.
