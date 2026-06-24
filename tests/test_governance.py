@@ -1,8 +1,8 @@
 """Tests for the governance catalog, principal, and gate logic (no I/O).
 
 DB-backed CRUD is exercised against a live Postgres elsewhere; here we cover the
-pure policy math, the fail-closed identity resolution (10a), and the access
-policy + PDP selection that the retrieval gate uses (10b).
+pure policy math, the fail-closed identity resolution (10a), the access policy +
+PDP selection the document gate uses (10b), and the GraphRAG community gate (10d).
 """
 
 from sourcerer import governance
@@ -200,3 +200,42 @@ def test_allowed_sources_excludes_forbidden_and_defaults_untagged(monkeypatch):
 
     bob = Principal(id="bob", clearance="public", teams=["hr"])  # on the hr team
     assert gate_mod.allowed_document_sources(bob, settings) == {"handbook.md", "faq.md", "notes.md"}
+
+
+# ---------- GraphRAG community gate (Phase 10d) ----------
+
+
+class _Comm:
+    """Minimal stand-in for a GraphRAG Community (duck-typed on .sources)."""
+
+    def __init__(self, sources):
+        self.sources = sources
+
+
+def _stub_corpus(monkeypatch, sources, tagged):
+    monkeypatch.setattr(gate_mod.corpus, "list_sources", lambda: [{"source": s} for s in sources])
+    monkeypatch.setattr(gate_mod.catalog, "list_assets", lambda kind: tagged)
+
+
+def test_communities_unfiltered_when_governance_off():
+    comms = [_Comm(["a.md"]), _Comm(["secret.md"])]
+    kept, denied = gate_mod.filter_readable_communities(
+        comms, ANONYMOUS, _settings(governance_enabled=False)
+    )
+    assert kept == comms and denied == 0
+
+
+def test_community_dropped_when_any_source_forbidden(monkeypatch):
+    # board.md is restricted; a community touching it is hidden from anonymous even
+    # though its other source (faq.md) is public — a summary can fuse both.
+    _stub_corpus(
+        monkeypatch,
+        ["faq.md", "board.md"],
+        [Asset(kind="document", id="board.md", classification="restricted")],
+    )
+    settings = _settings(governance_enabled=True, governance_default_classification="public")
+    comms = [_Comm(["faq.md"]), _Comm(["faq.md", "board.md"]), _Comm(["board.md"])]
+
+    kept, denied = gate_mod.filter_readable_communities(comms, ANONYMOUS, settings)
+    assert [c.sources for c in kept] == [["faq.md"]]  # only the all-public community
+    assert denied == 2

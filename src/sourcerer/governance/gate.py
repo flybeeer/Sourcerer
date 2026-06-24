@@ -112,3 +112,21 @@ def allowed_document_sources(principal: Principal | None, settings: Settings) ->
     if not settings.governance_enabled or principal is None:
         return None
     return get_pdp(settings).readable(principal, _document_assets(settings))
+
+
+def filter_readable_communities(
+    communities: list, principal: Principal | None, settings: Settings
+) -> tuple[list, int]:
+    """Drop GraphRAG communities the principal can't fully read (Phase 10d).
+
+    A community summary can fuse content from several source files; it's only safe
+    to map over when *every* one of its sources is readable. Returns (kept,
+    denied_count). When governance is off, nothing is filtered — so the map/reduce
+    sees only authorized communities, the same retrieval-time guarantee as the
+    document and SQL paths.
+    """
+    allowed = allowed_document_sources(principal, settings)
+    if allowed is None:
+        return list(communities), 0
+    kept = [c for c in communities if set(c.sources) <= allowed]
+    return kept, len(communities) - len(kept)

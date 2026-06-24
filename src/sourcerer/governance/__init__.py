@@ -9,9 +9,21 @@ from __future__ import annotations
 
 from sourcerer.config import Settings
 from sourcerer.governance import catalog, principal
+from sourcerer.governance.gate import (
+    allowed_document_sources,
+    filter_readable_communities,
+)
 from sourcerer.governance.principal import ANONYMOUS, Principal
 
-__all__ = ["catalog", "principal", "Principal", "ANONYMOUS", "resolve_principal"]
+__all__ = [
+    "catalog",
+    "principal",
+    "Principal",
+    "ANONYMOUS",
+    "resolve_principal",
+    "allowed_document_sources",
+    "filter_readable_communities",
+]
 
 
 def resolve_principal(header_value: str | None, settings: Settings) -> Principal | None:

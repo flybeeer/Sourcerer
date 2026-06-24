@@ -55,13 +55,16 @@ def _graph_global_query(
     settings,
     reduce_with_api: bool,
     reason_prefix: str,
-    principal: str | None = None,
+    principal_obj=None,
 ) -> QueryResponse:
     """Answer a whole-corpus question via GraphRAG global search (Phase 6).
 
     Map runs on the local model; the reduce (synthesis) runs on the API model when
     `reduce_with_api` (and a key is set), else locally. Logged like any response.
+    With governance on (Phase 10d), communities whose sources the principal can't
+    fully read are dropped *before* map, so the reduce never sees forbidden content.
     """
+    principal = principal_obj.id if principal_obj else None
     difficulty = query_router.route(request.query, settings).difficulty
     started = time.perf_counter()
     map_client = llm_client.get_llm_client(settings)  # cheap map calls stay local
@@ -88,6 +91,13 @@ def _graph_global_query(
 
     # Select the communities to map over (json: largest; postgres: pgvector-ranked).
     communities = graph_store.select_for_global(request.query, settings, live_sources)
+    # Phase 10d governance gate: drop communities the principal can't fully read,
+    # so map/reduce only ever see authorized content (None principal/off = no-op).
+    communities, denied_assets = governance.filter_readable_communities(
+        communities, principal_obj, settings
+    )
+    if denied_assets:
+        reason += f"; governance: {denied_assets} community(ies) hidden from {principal}"
     result = graph_search.global_search(
         request.query,
         communities,
@@ -115,6 +125,7 @@ def _graph_global_query(
         for i, c in enumerate(result.citations, start=1)
     ]
     answered = bool(result.citations)
+    audit_denied = denied_assets if (principal_obj and settings.governance_enabled) else None
 
     query_log.log_query(
         query=request.query,
@@ -129,6 +140,7 @@ def _graph_global_query(
         router_reason=reason,
         difficulty=difficulty,
         principal=principal,
+        denied_assets=audit_denied,
     )
     trace.log_query_event(
         query=request.query,
@@ -145,6 +157,7 @@ def _graph_global_query(
         answered=answered,
         guardrail=None if answered else "no_relevant_context",
         principal=principal,
+        denied_assets=audit_denied,
     )
     return QueryResponse(
         answer=result.text,
@@ -324,7 +337,7 @@ def query(request: QueryRequest, http_request: Request) -> QueryResponse:
                 reduce_with_api = settings.graphrag_reduce_with_api
                 prefix = "overview/whole-corpus question → GraphRAG global search"
             return _graph_global_query(
-                request, settings, reduce_with_api, prefix, principal=principal
+                request, settings, reduce_with_api, prefix, principal_obj=principal_obj
             )
         if forced_graph:
             raise HTTPException(
@@ -370,9 +383,11 @@ def query(request: QueryRequest, http_request: Request) -> QueryResponse:
     # means nothing is visible → retrieval returns [] → guardrail says "I don't
     # know" rather than leaking. Forbidden chunks never enter the candidate set.
     allowed_sources = governance.allowed_document_sources(principal_obj, settings)
+    denied_assets = None
     if allowed_sources is not None:
         visible = len(allowed_sources)
         total = len(corpus.list_sources())
+        denied_assets = total - visible  # audit: how many sources the gate hid
         decision = query_router.RouteDecision(
             route=decision.route,
             model=decision.model,
@@ -416,6 +431,7 @@ def query(request: QueryRequest, http_request: Request) -> QueryResponse:
         router_reason=decision.reason,
         difficulty=decision.difficulty,
         principal=principal,
+        denied_assets=denied_assets,
     )
     # Structured trace (machine-readable companion to the query_log row).
     trace.log_query_event(
@@ -433,6 +449,7 @@ def query(request: QueryRequest, http_request: Request) -> QueryResponse:
         answered=answered,
         guardrail=None if answered else "no_relevant_context",
         principal=principal,
+        denied_assets=denied_assets,
     )
 
     return QueryResponse(

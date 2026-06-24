@@ -99,6 +99,9 @@ def init_schema() -> None:
             "difficulty DOUBLE PRECISION",
             # Phase 10a — principal that issued the query (NULL = governance off).
             "principal TEXT",
+            # Phase 10d — how many assets the gate hid from this principal (audit;
+            # NULL = governance off / path doesn't count denials).
+            "denied_assets INTEGER",
         ):
             conn.execute(f"ALTER TABLE query_log ADD COLUMN IF NOT EXISTS {ddl}")
 
