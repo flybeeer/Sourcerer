@@ -51,6 +51,13 @@ graphrag = [
 duckdb = [
     "duckdb",
 ]
+# Data governance (Phase 10) — Cerbos PDP client + SQL parser for the gate. The
+# in-process LocalPDP needs neither; these are for GOVERNANCE_PDP=cerbos and the
+# 10c SQL-KB gate (SQLGlot table/column extraction + rewrite).
+governance = [
+    "cerbos",
+    "sqlglot",
+]
 
 [project.scripts]
 sourcerer-ingest = "scripts.ingest:main"

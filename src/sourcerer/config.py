@@ -156,8 +156,16 @@ class Settings(BaseSettings):
     governance_enabled: bool = False
     # Where asset metadata (classification/owner_team/pii_tags) lives.
     catalog_backend: str = "local"  # local (asset_catalog in Postgres) | openmetadata (prod swap)
-    # Cerbos PDP sidecar endpoint — used from 10b on; blank = gate not wired.
-    cerbos_endpoint: str = ""
+    # Policy decision point (10b). local = the reference policy evaluated in-process
+    # (no infra; runs the eval/tests); cerbos = the externalised Cerbos PDP sidecar
+    # over the same YAML policy. Mirrors LOCAL_BACKEND / SQL_KB_BACKEND.
+    governance_pdp: str = "local"  # local | cerbos
+    # Cerbos PDP sidecar endpoint (used when GOVERNANCE_PDP=cerbos).
+    cerbos_endpoint: str = "http://localhost:3592"
+    # Sensitivity assumed for a source with no asset_catalog entry. Default public
+    # so enabling governance only restricts what you explicitly tag — untagged docs
+    # stay world-readable rather than vanishing. Raise to fail-safe a strict corpus.
+    governance_default_classification: str = "public"
     # Request header carrying the principal id (stub IdP; JWT claims later).
     principal_header: str = "X-Principal"
 

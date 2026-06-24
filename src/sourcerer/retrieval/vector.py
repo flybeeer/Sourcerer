@@ -8,22 +8,30 @@ from __future__ import annotations
 
 from sourcerer.db.session import connect, to_vector_literal
 from sourcerer.ingestion.embeddings import embed_query
+from sourcerer.retrieval.filter import source_clause
 from sourcerer.retrieval.types import RetrievedChunk
 
 
-def search(query: str, top_k: int) -> list[RetrievedChunk]:
-    """Embed the query and return the top_k most similar chunks."""
+def search(query: str, top_k: int, allowed_sources: set[str] | None = None) -> list[RetrievedChunk]:
+    """Embed the query and return the top_k most similar chunks.
+
+    `allowed_sources` (Phase 10b governance gate) pushes a `source = ANY(...)`
+    predicate down so forbidden chunks never enter the candidate set. None = no
+    filter; an empty set yields no rows.
+    """
     query_embedding = to_vector_literal(embed_query(query))
+    clause, extra = source_clause(allowed_sources)
     with connect() as conn:
         rows = conn.execute(
-            """
+            f"""
             SELECT id, source, chunk_index, content,
                    1 - (embedding <=> %s::vector) AS score
             FROM chunks
+            WHERE TRUE{clause}
             ORDER BY embedding <=> %s::vector
             LIMIT %s
             """,
-            (query_embedding, query_embedding, top_k),
+            (query_embedding, *extra, query_embedding, top_k),
         ).fetchall()
 
     return [

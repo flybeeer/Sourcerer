@@ -15,14 +15,21 @@ whitespace (e.g. Thai) well — good enough for Phase 2; revisit if needed.
 from __future__ import annotations
 
 from sourcerer.db.session import connect
+from sourcerer.retrieval.filter import source_clause
 from sourcerer.retrieval.types import RetrievedChunk
 
 # plainto_tsquery renders as "'a' & 'b' & 'c'"; turn the ANDs into ORs.
 _OR_QUERY = "replace(plainto_tsquery('simple', %s)::text, ' & ', ' | ')::tsquery"
 
 
-def search(query: str, top_k: int) -> list[RetrievedChunk]:
-    """Return the top_k chunks matching any query keyword, best first."""
+def search(query: str, top_k: int, allowed_sources: set[str] | None = None) -> list[RetrievedChunk]:
+    """Return the top_k chunks matching any query keyword, best first.
+
+    `allowed_sources` (Phase 10b governance gate) pushes a `source = ANY(...)`
+    predicate down so forbidden chunks never enter the candidate set. None = no
+    filter; an empty set yields no rows.
+    """
+    clause, extra = source_clause(allowed_sources)
     with connect() as conn:
         rows = conn.execute(
             f"""
@@ -30,11 +37,11 @@ def search(query: str, top_k: int) -> list[RetrievedChunk]:
             SELECT id, source, chunk_index, content,
                    ts_rank_cd(content_tsv, q.query) AS score
             FROM chunks, q
-            WHERE content_tsv @@ q.query
+            WHERE content_tsv @@ q.query{clause}
             ORDER BY score DESC
             LIMIT %s
             """,
-            (query, top_k),
+            (query, *extra, top_k),
         ).fetchall()
 
     return [

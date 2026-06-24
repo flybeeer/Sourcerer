@@ -48,6 +48,20 @@ services:
   #             count: all
   #             capabilities: [gpu]
 
+  # Cerbos PDP sidecar — the governance gate's policy decision point (Phase 10b).
+  # Stateless; serves allow/deny over the versioned YAML in ./policies. Only used
+  # when GOVERNANCE_PDP=cerbos (the in-process LocalPDP needs no sidecar).
+  cerbos:
+    image: ghcr.io/cerbos/cerbos:latest
+    command: ["server", "--config=/config/config.yaml"]
+    volumes:
+      - ./policies:/policies:ro
+      - ./cerbos/config.yaml:/config/config.yaml:ro
+    ports:
+      - "3592:3592"  # HTTP
+      - "3593:3593"  # gRPC
+    restart: unless-stopped
+
   api:
     build: .
     env_file: .env
@@ -55,12 +69,16 @@ services:
       # override hosts so the app reaches the other containers, not localhost
       POSTGRES_HOST: db
       OLLAMA_BASE_URL: http://ollama:11434
+      # Point the gate at the sidecar (only consulted when GOVERNANCE_PDP=cerbos).
+      CERBOS_ENDPOINT: http://cerbos:3592
     ports:
       - "${API_PORT:-8000}:8000"
     depends_on:
       db:
         condition: service_healthy
       ollama:
+        condition: service_started
+      cerbos:
         condition: service_started
     restart: unless-stopped
 

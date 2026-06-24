@@ -365,9 +365,30 @@ def query(request: QueryRequest, http_request: Request) -> QueryResponse:
         )
     _log.info("route=%s model=%s — %s", decision.route, decision.model, decision.reason)
 
+    # Phase 10b governance gate: resolve the sources this principal may read and
+    # push them into retrieval (None = governance off → no filter). An empty set
+    # means nothing is visible → retrieval returns [] → guardrail says "I don't
+    # know" rather than leaking. Forbidden chunks never enter the candidate set.
+    allowed_sources = governance.allowed_document_sources(principal_obj, settings)
+    if allowed_sources is not None:
+        visible = len(allowed_sources)
+        total = len(corpus.list_sources())
+        decision = query_router.RouteDecision(
+            route=decision.route,
+            model=decision.model,
+            difficulty=decision.difficulty,
+            reason=f"{decision.reason}; governance: {visible}/{total} source(s) visible "
+            f"to {principal}",
+            signals=decision.signals,
+        )
+
     started = time.perf_counter()
     chunks = retriever.retrieve(
-        request.query, settings, mode=resolved_mode, top_k_final=request.top_k
+        request.query,
+        settings,
+        mode=resolved_mode,
+        top_k_final=request.top_k,
+        allowed_sources=allowed_sources,
     )
     # Guardrail 2: drop weakly-relevant chunks; empty context → generator says
     # "I don't know" instead of guessing.

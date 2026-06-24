@@ -1,0 +1,11 @@
+# Cerbos PDP server config (Phase 10b). Loads versioned policies from /policies
+# (mounted from ./policies) over the disk driver; hot-reloads on change.
+server:
+  httpListenAddr: ":3592"
+  grpcListenAddr: ":3593"
+
+storage:
+  driver: "disk"
+  disk:
+    directory: /policies
+    watchForChanges: true

@@ -1,18 +1,21 @@
-"""Tests for the governance catalog + principal logic (Phase 10a, no I/O).
+"""Tests for the governance catalog, principal, and gate logic (no I/O).
 
 DB-backed CRUD is exercised against a live Postgres elsewhere; here we cover the
-pure policy math and the fail-closed identity resolution that the Cerbos gate
-will build on from 10b.
+pure policy math, the fail-closed identity resolution (10a), and the access
+policy + PDP selection that the retrieval gate uses (10b).
 """
 
 from sourcerer import governance
 from sourcerer.config import Settings
+from sourcerer.governance import gate as gate_mod
 from sourcerer.governance import principal as principal_mod
 from sourcerer.governance.catalog import (
     Asset,
     classification_rank,
     parse_pii_tags,
 )
+from sourcerer.governance.gate import CerbosPDP, LocalPDP, get_pdp
+from sourcerer.governance.policy import can_read
 from sourcerer.governance.principal import ANONYMOUS, Principal
 
 
@@ -108,3 +111,92 @@ def test_resolve_is_fail_closed_when_lookup_errors(monkeypatch):
     monkeypatch.setattr(principal_mod, "get_principal", boom)
     settings = _settings(governance_enabled=True)
     assert governance.resolve_principal("alice", settings) is ANONYMOUS
+
+
+# ---------- access policy (Phase 10b) ----------
+
+_CONFIDENTIAL_HR = Asset(
+    kind="document", id="handbook.md", classification="confidential", owner_team="hr"
+)
+_PUBLIC = Asset(kind="document", id="faq.md", classification="public")
+_RESTRICTED = Asset(kind="document", id="board.md", classification="restricted")
+
+
+def test_clearance_at_or_above_classification_allows():
+    alice = Principal(id="alice", clearance="confidential")
+    assert can_read(alice, _CONFIDENTIAL_HR)
+    assert can_read(alice, _PUBLIC)
+
+
+def test_lower_clearance_without_team_is_denied():
+    alice = Principal(id="alice", clearance="internal", teams=["ops"])
+    assert not can_read(alice, _CONFIDENTIAL_HR)
+
+
+def test_owner_team_overrides_low_clearance():
+    # Low clearance but on the owning team → may read its own team's docs.
+    hr_junior = Principal(id="dave", clearance="internal", teams=["hr"])
+    assert can_read(hr_junior, _CONFIDENTIAL_HR)
+
+
+def test_admin_role_reads_anything():
+    carol = Principal(id="carol", roles=["admin"], clearance="internal", teams=[])
+    assert can_read(carol, _RESTRICTED)
+
+
+def test_anonymous_sees_only_public():
+    assert can_read(ANONYMOUS, _PUBLIC)
+    assert not can_read(ANONYMOUS, _CONFIDENTIAL_HR)
+    assert not can_read(ANONYMOUS, _RESTRICTED)
+
+
+# ---------- local PDP + selection ----------
+
+
+def test_local_pdp_filters_to_readable_ids():
+    assets = [_PUBLIC, _CONFIDENTIAL_HR, _RESTRICTED]
+    alice = Principal(id="alice", clearance="confidential")
+    assert LocalPDP().readable(alice, assets) == {"faq.md", "handbook.md"}
+
+
+def test_get_pdp_selects_backend():
+    assert isinstance(get_pdp(_settings(governance_pdp="local")), LocalPDP)
+    assert isinstance(get_pdp(_settings(governance_pdp="cerbos")), CerbosPDP)
+
+
+def test_get_pdp_rejects_unknown_backend():
+    import pytest
+
+    with pytest.raises(ValueError):
+        get_pdp(_settings(governance_pdp="opa"))
+
+
+# ---------- allowed_document_sources (gate planner, corpus/catalog stubbed) ----------
+
+
+def test_allowed_sources_none_when_governance_off(monkeypatch):
+    settings = _settings(governance_enabled=False)
+    assert gate_mod.allowed_document_sources(Principal(id="x"), settings) is None
+
+
+def test_allowed_sources_none_when_no_principal():
+    settings = _settings(governance_enabled=True)
+    assert gate_mod.allowed_document_sources(None, settings) is None
+
+
+def test_allowed_sources_excludes_forbidden_and_defaults_untagged(monkeypatch):
+    # Corpus has 3 sources; only handbook.md is tagged (confidential/hr). The
+    # other two are untagged → default public. Anonymous sees only the public two.
+    monkeypatch.setattr(
+        gate_mod.corpus,
+        "list_sources",
+        lambda: [{"source": "handbook.md"}, {"source": "faq.md"}, {"source": "notes.md"}],
+    )
+    monkeypatch.setattr(gate_mod.catalog, "list_assets", lambda kind: [_CONFIDENTIAL_HR])
+    settings = _settings(governance_enabled=True, governance_default_classification="public")
+
+    allowed = gate_mod.allowed_document_sources(ANONYMOUS, settings)
+    assert allowed == {"faq.md", "notes.md"}  # handbook.md (confidential) excluded
+
+    bob = Principal(id="bob", clearance="public", teams=["hr"])  # on the hr team
+    assert gate_mod.allowed_document_sources(bob, settings) == {"handbook.md", "faq.md", "notes.md"}

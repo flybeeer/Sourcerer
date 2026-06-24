@@ -13,10 +13,19 @@ from sourcerer.retrieval.rerank import get_reranker
 from sourcerer.retrieval.types import RetrievedChunk
 
 
-def retrieve(query: str, settings: Settings, top_k_final: int) -> list[RetrievedChunk]:
-    """Run the full hybrid pipeline and return the final top_k_final chunks."""
-    vector_hits = vector.search(query, settings.top_k_vector)
-    bm25_hits = bm25.search(query, settings.top_k_bm25)
+def retrieve(
+    query: str,
+    settings: Settings,
+    top_k_final: int,
+    allowed_sources: set[str] | None = None,
+) -> list[RetrievedChunk]:
+    """Run the full hybrid pipeline and return the final top_k_final chunks.
+
+    `allowed_sources` (Phase 10b governance gate) is pushed into both legs before
+    fusion/rerank, so forbidden sources can't reach the candidate set.
+    """
+    vector_hits = vector.search(query, settings.top_k_vector, allowed_sources)
+    bm25_hits = bm25.search(query, settings.top_k_bm25, allowed_sources)
 
     fused = reciprocal_rank_fusion([vector_hits, bm25_hits], k=settings.rrf_k)
 
