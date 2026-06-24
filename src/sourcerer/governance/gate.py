@@ -71,10 +71,11 @@ class CerbosPDP:
 
         with CerbosClient(self._endpoint) as client:
             resp = client.check_resources(cprincipal, resources)
+        # get_resource → the per-resource result or None (missing → fail-closed).
         return {
             a.id
             for a in assets
-            if resp.get_resource(a.id, lenient=True) and resp.get_resource(a.id).is_allowed("read")
+            if (r := resp.get_resource(a.id)) is not None and r.is_allowed("read")
         }
 
 
