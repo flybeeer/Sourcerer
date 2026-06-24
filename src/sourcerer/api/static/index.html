@@ -130,7 +130,15 @@
       </select>
       <label for="topk" id="topkLabel">top_k</label>
       <input id="topk" type="number" min="1" max="50" placeholder="5" />
-      <span class="hint" id="controlsHint">top_k blank = default (5)</span>
+      <label for="principal">Principal</label>
+      <select id="principal">
+        <option value="">— none (no governance) —</option>
+        <option value="anonymous">anonymous (public)</option>
+        <option value="alice">alice (analyst · internal · ops)</option>
+        <option value="bob">bob (hr · confidential · hr)</option>
+        <option value="carol">carol (admin · restricted)</option>
+      </select>
+      <span class="hint" id="controlsHint">top_k blank = default (5) · Principal sets the X-Principal header (Phase 10)</span>
     </div>
 
     <div id="status"></div>
@@ -153,6 +161,7 @@
     const modeSelect = document.getElementById("mode");
     const routeSelect = document.getElementById("route");
     const topkInput = document.getElementById("topk");
+    const principalSelect = document.getElementById("principal");
     const submitBtn = document.getElementById("submit");
     const statusEl = document.getElementById("status");
     const resultEl = document.getElementById("result");
@@ -267,11 +276,15 @@
       }
       if (routeSelect.value !== "auto") body.route_override = routeSelect.value;
 
+      const headers = { "content-type": "application/json" };
+      const principal = principalSelect.value;
+      if (principal) headers["X-Principal"] = principal;
+
       const started = performance.now();
       try {
         const resp = await fetch("/query", {
           method: "POST",
-          headers: { "content-type": "application/json" },
+          headers,
           body: JSON.stringify(body),
         });
         if (!resp.ok) {
