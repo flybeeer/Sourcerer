@@ -17,6 +17,7 @@ def retrieve(
     mode: str | None = None,
     top_k_final: int | None = None,
     allowed_sources: set[str] | None = None,
+    reader_principal: str | None = None,
 ) -> list[RetrievedChunk]:
     """Retrieve chunks for a query.
 
@@ -25,12 +26,20 @@ def retrieve(
         top_k_final: number of chunks to return. Defaults to settings.top_k_final.
         allowed_sources: governance gate (Phase 10b) — restrict retrieval to these
             sources. None = no filter; an empty set returns nothing.
+        reader_principal: RLS backstop (Phase 10d) — run under the restricted reader
+            role so the database independently filters rows for this principal.
     """
     resolved_mode = (mode or settings.retrieval_mode).lower()
     final = top_k_final or settings.top_k_final
 
     if resolved_mode == "vector":
-        return vector.search(query, final, allowed_sources)
+        return vector.search(query, final, allowed_sources, reader_principal)
     if resolved_mode == "hybrid":
-        return hybrid.retrieve(query, settings, top_k_final=final, allowed_sources=allowed_sources)
+        return hybrid.retrieve(
+            query,
+            settings,
+            top_k_final=final,
+            allowed_sources=allowed_sources,
+            reader_principal=reader_principal,
+        )
     raise ValueError(f"Unknown retrieval mode: {resolved_mode!r}")

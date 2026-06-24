@@ -12,16 +12,22 @@ from sourcerer.retrieval.filter import source_clause
 from sourcerer.retrieval.types import RetrievedChunk
 
 
-def search(query: str, top_k: int, allowed_sources: set[str] | None = None) -> list[RetrievedChunk]:
+def search(
+    query: str,
+    top_k: int,
+    allowed_sources: set[str] | None = None,
+    reader_principal: str | None = None,
+) -> list[RetrievedChunk]:
     """Embed the query and return the top_k most similar chunks.
 
     `allowed_sources` (Phase 10b governance gate) pushes a `source = ANY(...)`
     predicate down so forbidden chunks never enter the candidate set. None = no
-    filter; an empty set yields no rows.
+    filter; an empty set yields no rows. `reader_principal` (RLS backstop) runs the
+    query under the restricted reader role so the DB filters rows for it too.
     """
     query_embedding = to_vector_literal(embed_query(query))
     clause, extra = source_clause(allowed_sources)
-    with connect() as conn:
+    with connect(reader_principal=reader_principal) as conn:
         rows = conn.execute(
             f"""
             SELECT id, source, chunk_index, content,

@@ -168,6 +168,14 @@ class Settings(BaseSettings):
     governance_default_classification: str = "public"
     # Request header carrying the principal id (stub IdP; JWT claims later).
     principal_header: str = "X-Principal"
+    # Postgres row-level security backstop (defense-in-depth). When on, document
+    # retrieval runs under a restricted, non-superuser reader role whose RLS policy
+    # *recomputes* the access rule in the database from the catalog + the principal
+    # — so even a bug in the app-level gate can't return forbidden rows. Off by
+    # default; run scripts/setup_rls.py once to provision the role + policy.
+    governance_rls_enabled: bool = False
+    rls_reader_user: str = "sourcerer_reader"
+    rls_reader_password: str = "reader_change_me"
 
     @property
     def dsn(self) -> str:
@@ -179,6 +187,14 @@ class Settings(BaseSettings):
         """
         return (
             f"postgresql://{self.postgres_user}:{self.postgres_password}"
+            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+        )
+
+    @property
+    def reader_dsn(self) -> str:
+        """DSN for the restricted RLS reader role (subject to row-level security)."""
+        return (
+            f"postgresql://{self.rls_reader_user}:{self.rls_reader_password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
 

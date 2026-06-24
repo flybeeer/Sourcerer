@@ -397,6 +397,10 @@ def query(request: QueryRequest, http_request: Request) -> QueryResponse:
             signals=decision.signals,
         )
 
+    # RLS backstop (Phase 10d): when enabled, retrieve under the restricted reader
+    # role so the DB re-enforces the policy independently of the app-level filter.
+    reader_principal = principal if (settings.governance_rls_enabled and principal_obj) else None
+
     started = time.perf_counter()
     chunks = retriever.retrieve(
         request.query,
@@ -404,6 +408,7 @@ def query(request: QueryRequest, http_request: Request) -> QueryResponse:
         mode=resolved_mode,
         top_k_final=request.top_k,
         allowed_sources=allowed_sources,
+        reader_principal=reader_principal,
     )
     # Guardrail 2: drop weakly-relevant chunks; empty context → generator says
     # "I don't know" instead of guessing.
