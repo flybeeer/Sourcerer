@@ -65,7 +65,9 @@ class CerbosPDP:
         )
         resources = ResourceList()
         for a in assets:
-            resources.add(Resource(a.id, "document", attr=a.attr()), actions={"read"})
+            # a.kind ("document" | "table" | "column") = the Cerbos resource kind,
+            # so one PDP governs all three retrieval paths.
+            resources.add(Resource(a.id, a.kind, attr=a.attr()), actions={"read"})
 
         with CerbosClient(self._endpoint) as client:
             resp = client.check_resources(cprincipal, resources)

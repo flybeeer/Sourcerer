@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 
 from sourcerer.config import Settings
 from sourcerer.generation.prompts import build_sql_messages
+from sourcerer.governance.principal import Principal
 from sourcerer.llm.client import LLMClient
 from sourcerer.sqlkb.backends import QueryCostError, get_backend
 from sourcerer.sqlkb.safety import UnsafeSQLError, safe_select
@@ -32,6 +33,10 @@ class SQLExecution:
     # How many tables were described in the prompt — equals the whole schema unless
     # schema retrieval narrowed it (so eval can measure that narrowing per query).
     prompt_tables: int = 0
+    # Governance gate (Phase 10c): whether the gate rejected the query, and which
+    # PII columns it masked ("table.col"). Empty/False when governance is off.
+    gate_rejected: bool = False
+    masked_columns: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -68,8 +73,27 @@ def _execute(settings: Settings, sql: str) -> tuple[list[str], list[tuple]]:
     return columns, rows
 
 
-def run(query: str, settings: Settings, client: LLMClient) -> SQLExecution:
-    """Generate, validate, and execute SQL for `query`. Never raises on bad SQL."""
+def _schema_map(settings: Settings) -> dict[str, list[str]]:
+    """{table: [column names]} for the source DB — used to expand `SELECT *` safely."""
+    backend = get_backend(settings)
+    with backend.connect_ro(settings.sql_kb_path) as conn:
+        return {
+            t: [c.name for c in backend.list_columns(conn, t)] for t in backend.list_tables(conn)
+        }
+
+
+def run(
+    query: str,
+    settings: Settings,
+    client: LLMClient,
+    principal: Principal | None = None,
+) -> SQLExecution:
+    """Generate, validate, gate, and execute SQL for `query`. Never raises on bad SQL.
+
+    When governance is enabled and a principal is given, the validated SQL passes
+    through the SQLGlot+policy gate (Phase 10c): a forbidden table rejects the
+    query; unreadable PII columns are masked before execution.
+    """
     schema = select_schema(query, settings.sql_kb_path, settings)
     result = client.chat(build_sql_messages(query, schema))
     raw_sql = result.text.strip()
@@ -86,6 +110,18 @@ def run(query: str, settings: Settings, client: LLMClient) -> SQLExecution:
     except UnsafeSQLError as exc:
         base.error = f"unsafe SQL rejected: {exc}"
         return base
+
+    if settings.governance_enabled and principal is not None:
+        # Lazy import: SQLGlot is the [governance] extra, only needed when gating.
+        from sourcerer.governance import sql_gate
+
+        decision = sql_gate.gate_sql(validated, principal, settings, schema=_schema_map(settings))
+        if not decision.allowed:
+            base.error = f"governance: {decision.reason}"
+            base.gate_rejected = True
+            return base
+        validated = decision.sql
+        base.masked_columns = decision.masked_columns
 
     base.sql = validated
     try:

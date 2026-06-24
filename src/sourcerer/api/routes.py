@@ -9,8 +9,7 @@ from pathlib import Path
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.responses import FileResponse
 
-from sourcerer import corpus
-from sourcerer import governance
+from sourcerer import corpus, governance
 from sourcerer.api.schemas import (
     CitationModel,
     DeleteResponse,
@@ -162,9 +161,7 @@ def _graph_global_query(
     )
 
 
-def _text_to_sql_query(
-    request: QueryRequest, settings, principal: str | None = None
-) -> QueryResponse:
+def _text_to_sql_query(request: QueryRequest, settings, principal_obj=None) -> QueryResponse:
     """Answer an analytical question by generating + running SQL (Phase 7, Path B).
 
     The router decision still applies (privacy keeps sensitive queries local); the
@@ -174,7 +171,10 @@ def _text_to_sql_query(
     """
     decision = query_router.route(request.query, settings)
     sensitive = bool(decision.signals.get("sensitive_hits"))
+    principal = principal_obj.id if principal_obj else None
     reason = f"analytical question → Text-to-SQL ({settings.sql_kb_path})"
+    if principal_obj is not None:
+        reason += f"; governance gate as {principal}"
 
     # The SQL writer: API only when opted in, keyed, and not a sensitive query.
     use_api_for_sql = (
@@ -189,7 +189,7 @@ def _text_to_sql_query(
     answer_client = llm_client.client_for(decision.route, settings)
 
     started = time.perf_counter()
-    answer = sql_answer.answer(request.query, settings, sql_client, answer_client)
+    answer = sql_answer.answer(request.query, settings, sql_client, answer_client, principal_obj)
     latency_ms = int((time.perf_counter() - started) * 1000)
 
     ran_model = answer.model or decision.model
@@ -295,7 +295,7 @@ def query(request: QueryRequest, http_request: Request) -> QueryResponse:
     )
     if forced_sql or auto_sql:
         if Path(settings.sql_kb_path).exists():
-            return _text_to_sql_query(request, settings, principal=principal)
+            return _text_to_sql_query(request, settings, principal_obj=principal_obj)
         if forced_sql:
             raise HTTPException(
                 status_code=400,
