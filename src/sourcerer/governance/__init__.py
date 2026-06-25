@@ -13,6 +13,7 @@ from sourcerer.governance.gate import (
     allowed_document_sources,
     filter_readable_communities,
 )
+from sourcerer.governance.plan import allowed_document_sources_plan
 from sourcerer.governance.principal import ANONYMOUS, Principal
 
 __all__ = [
@@ -22,6 +23,7 @@ __all__ = [
     "ANONYMOUS",
     "resolve_principal",
     "allowed_document_sources",
+    "allowed_document_sources_plan",
     "filter_readable_communities",
 ]
 

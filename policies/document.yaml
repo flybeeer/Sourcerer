@@ -5,23 +5,22 @@
 # policy.can_read in-process; both must yield the same allow/deny.
 #
 #   ALLOW read if  principal is admin
-#              OR  clearance_rank(principal) >= clearance_rank(asset)   (lattice)
-#              OR  asset.owner_team in principal.teams                  (ownership)
+#              OR  asset.classification in principal.readable_classifications  (lattice)
+#              OR  asset.owner_team in principal.teams                         (ownership)
 #
-# Unknown levels are ranked fail-safe (clearance→lowest, classification→highest),
-# matching catalog.classification_rank.
+# The lattice comparison is precomputed into `readable_classifications` on the
+# principal (Principal.readable_classifications = every level ≤ its clearance),
+# so the condition is plain set membership instead of rank arithmetic over a map.
+# Why: PlanResources can then emit a clean `classification IN [...]` plan that
+# governance/plan.py translates to a SQL `= ANY(...)` for predicate pushdown
+# (used by CAG). CheckResources and policy.can_read yield the identical set, so
+# all three PDP modes stay in parity. Unknown classifications are absent from the
+# set → denied (fail-safe), matching catalog.classification_rank.
 ---
 apiVersion: api.cerbos.dev/v1
 resourcePolicy:
   version: default
   resource: document
-  variables:
-    local:
-      rank: '{"public": 0, "internal": 1, "confidential": 2, "restricted": 3}'
-      principalRank: >-
-        P.attr.clearance in V.rank ? V.rank[P.attr.clearance] : 0
-      assetRank: >-
-        R.attr.classification in V.rank ? V.rank[R.attr.classification] : 99
   rules:
     # Admins read anything.
     - actions: ["read"]
@@ -35,5 +34,5 @@ resourcePolicy:
       condition:
         match:
           expr: >-
-            V.principalRank >= V.assetRank
+            R.attr.classification in P.attr.readable_classifications
             || (has(R.attr.owner_team) && R.attr.owner_team in P.attr.teams)

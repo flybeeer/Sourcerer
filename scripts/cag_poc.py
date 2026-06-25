@@ -34,7 +34,12 @@ WHO = ["anonymous", "alice", "bob", "carol"]
 
 def main() -> None:
     settings = get_settings().model_copy(
-        update={"governance_enabled": True, "governance_pdp": "cerbos"}
+        update={
+            "governance_enabled": True,
+            "governance_pdp": "cerbos",
+            # CAG reads whole docs from disk; build_governance_demo writes them here.
+            "cag_corpus_dir": "data/governance_demo",
+        }
     )
     client = get_llm_client(settings)
     cag_cache.clear()
