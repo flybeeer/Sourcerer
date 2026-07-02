@@ -71,6 +71,51 @@ Ordered cheap → expensive:
   reusing the thin LLM client wrapper.
 - Thresholds (staleness window, stub word count, dup similarity) as CLI flags with the defaults above.
 
+## Usage
+
+Two separate tools, two separate times in the document's life:
+
+| When | Tool | Effect |
+|---|---|---|
+| At ingest | `scripts/ingest_confluence.py --max-issues N` | gate — skip untrusted pages before they're chunked |
+| After ingest, anytime | `scripts/dq_report.py [--with-llm] [--persist]` | report — score everything already ingested |
+
+```bash
+# Ingest with the quality gate on: pages failing more than 3 of the 6
+# metadata checks are skipped (chunks removed if a prior run had them),
+# but their metadata is still recorded with the verdict.
+python scripts/ingest_confluence.py "space = QA and type = page" --max-issues 3
+
+# Same, with a stricter 1-year staleness window.
+python scripts/ingest_confluence.py "space = QA and type = page" --max-issues 3 --stale-years 1
+
+# Report only (Stage 1, no LLM, read-only) — prints a per-document table.
+python scripts/dq_report.py
+
+# Report + Stage 2 (LLM judge, markup/staleness regex) — slower (~2s/doc via Ollama).
+python scripts/dq_report.py --with-llm
+
+# Report + Stage 2 + write the result into document_metadata.metadata->'dq'
+# so it's queryable via SQL/DBeaver without re-running the script.
+python scripts/dq_report.py --with-llm --persist
+```
+
+Checking results afterwards (either tool) via SQL:
+
+```sql
+-- Pages the ingest gate rejected (kept for review, not in `chunks`).
+SELECT source, metadata->>'title', metadata->'ingest_gate'
+FROM document_metadata
+WHERE metadata->'ingest_gate'->>'passed' = 'false';
+
+-- Persisted report scores, worst first.
+SELECT source, metadata->>'title',
+       (metadata->'dq'->>'issue_count')::int AS issues,
+       (metadata->'dq'->>'llm_score')::float AS llm_score
+FROM document_metadata
+ORDER BY issues DESC NULLS LAST;
+```
+
 ## Ingest-time quality gate (built)
 
 Instead of only reporting after the fact, the metadata checks also run *before*
