@@ -90,6 +90,17 @@ def init_schema() -> None:
             CREATE INDEX IF NOT EXISTS chunks_content_tsv_gin
             ON chunks USING gin (content_tsv)
             """)
+        # Per-document metadata, keyed by the same `source` chunks use. JSONB
+        # because the field set is source-type-shaped (Confluence's is richer
+        # than a plain file's) rather than a fixed set of columns; only loaders
+        # that have real metadata to offer populate it (currently: Confluence).
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS document_metadata (
+                source     TEXT        PRIMARY KEY,
+                metadata   JSONB       NOT NULL,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """)
         # Query log — one row per answered query (the start of observability).
         conn.execute("""
             CREATE TABLE IF NOT EXISTS query_log (

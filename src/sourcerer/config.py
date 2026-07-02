@@ -184,6 +184,15 @@ class Settings(BaseSettings):
     rls_reader_user: str = "sourcerer_reader"
     rls_reader_password: str = "reader_change_me"
 
+    # ---------- Confluence ingestion (optional) ----------
+    # Pull Confluence Cloud pages in as documents via a CQL query — same idea as
+    # the SQL KB's user-written SELECT: the query defines what to ingest. Run via
+    # scripts/ingest_confluence.py; ingestion-only, no runtime routing.
+    confluence_base_url: str = ""  # e.g. https://yoursite.atlassian.net/wiki
+    confluence_email: str = ""  # Confluence Cloud account email, paired with an API token
+    confluence_api_token: str = ""
+    confluence_max_pages: int = 1000  # safety cap on pages pulled per ingest run
+
     # ---------- Cache-Augmented Generation (CAG PoC, optional) ----------
     # CAG preloads whole authorized documents into the prompt instead of retrieving
     # per query, so it needs neither chunking nor embeddings — only the full text.
