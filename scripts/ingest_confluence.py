@@ -51,6 +51,21 @@ def main() -> None:
         default=settings.confluence_max_pages,
         help=f"Safety cap on pages pulled (default: {settings.confluence_max_pages}).",
     )
+    # Ingest-time quality gate (see docs/confluence-data-quality.md).
+    parser.add_argument(
+        "--max-issues",
+        type=int,
+        default=None,
+        help="Turn on the quality gate: skip (and de-index) pages failing more than this many "
+        "metadata checks (stale/orphaned-owner/unlabeled/never-reviewed/orphan-page/bad-status). "
+        "Metadata is still stored for every page. Default: gate off.",
+    )
+    parser.add_argument(
+        "--stale-years",
+        type=float,
+        default=2.0,
+        help="Staleness window for the quality gate's 'stale' check (default: 2 years).",
+    )
     # Phase 10a — tag the ingested pages in the governance asset catalog.
     parser.add_argument(
         "--classification",
@@ -79,8 +94,17 @@ def main() -> None:
         email=args.email,
         api_token=args.token,
         max_pages=args.max_pages,
+        max_issues=args.max_issues,
+        stale_years=args.stale_years,
     )
     print(f"Done. Ingested {summary['documents']} page(s), {summary['chunks']} chunk(s).")
+    if summary["skipped"]:
+        print(
+            f"Quality gate skipped {len(summary['skipped'])} page(s) "
+            f"(> {args.max_issues} metadata issues; metadata kept, chunks removed):"
+        )
+        for source in summary["skipped"]:
+            print(f"  - {source}")
 
     if args.classification or args.owner_team or args.pii:
         # Lazy import keeps ingestion working without exercising the governance pillar.

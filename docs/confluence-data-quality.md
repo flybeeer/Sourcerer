@@ -1,6 +1,7 @@
-# Confluence Document Data Quality (design — not built yet)
+# Confluence Document Data Quality
 
-> Status: **PLANNED, design only.** Nothing in this doc is implemented.
+> Status: **BUILT** — `scripts/dq_report.py` (both stages + `--persist`) and the
+> ingest-time quality gate (`--max-issues` on `scripts/ingest_confluence.py`).
 > Prerequisite: Confluence ingestion + `document_metadata` table (done — see CLAUDE.md).
 
 ## Why
@@ -70,11 +71,45 @@ Ordered cheap → expensive:
   reusing the thin LLM client wrapper.
 - Thresholds (staleness window, stub word count, dup similarity) as CLI flags with the defaults above.
 
+## Ingest-time quality gate (built)
+
+Instead of only reporting after the fact, the metadata checks also run *before*
+chunk/embed/store — the same "untrusted content never enters the candidate set"
+idea as the Phase 10 governance gate, applied to quality:
+
+```
+python scripts/ingest_confluence.py "space = QA and type = page" --max-issues 3
+```
+
+- `ingestion/quality.py::metadata_issues(metadata)` is the pure-Python twin of
+  the report's SQL checks (same six checks, same missing-field semantics — the
+  two must stay in parity, like `policy.py` local vs Cerbos).
+- A page failing **more than** `--max-issues` checks is not ingested, and any
+  chunks from a previous ungated run are **deleted** — retrieval never serves a
+  page the gate distrusts.
+- Its metadata IS still stored in full, with the verdict under
+  `metadata->'ingest_gate'` (`{passed, issues, max_issues}`) — a separate key
+  from the report's `'dq'`, so `--persist` runs and gate runs never clobber
+  each other. Nothing is lost for review:
+
+```sql
+SELECT source, metadata->>'title', metadata->'ingest_gate'
+FROM document_metadata
+WHERE metadata->'ingest_gate'->>'passed' = 'false';
+```
+
+- `--stale-years` tunes the staleness window; default gate = off (no flag → behaviour unchanged).
+- Live run (QA space, `--max-issues 3`): 39/44 ingested, 5 skipped (the
+  `version = 1` pages, each failing stale + orphaned_owner + unlabeled +
+  never_reviewed), their chunks removed, all 44 metadata rows kept.
+
 ## Wiring back into RAG (later, optional)
 
-- Store the score in `document_metadata` (e.g. `metadata->'dq'`) on each report run.
+- ~~Store the score in `document_metadata` (e.g. `metadata->'dq'`) on each report run.~~
+  **Done** — `dq_report.py --persist`.
 - Retrieval filter: exclude sources below a score floor (same `WHERE source = ANY(...)` pushdown
-  mechanism the governance gate already uses in `retrieval/filter.py`).
+  mechanism the governance gate already uses in `retrieval/filter.py`). The ingest gate covers
+  the Confluence path; a retrieval-time floor would cover already-ingested/other sources.
 - Citation warning: surface staleness in the API/UI next to the source
   ("last modified 2020-03-24").
 
