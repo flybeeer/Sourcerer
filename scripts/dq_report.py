@@ -25,18 +25,27 @@ Scope: only sources with a `document_metadata` row are considered — today
 that's Confluence pages exclusively (directory/SQL ingestion don't populate
 per-document metadata), matching the design doc's title.
 
+By default this is read-only. `--persist` writes each document's dq object
+into `document_metadata.metadata->'dq'`, queryable via plain SQL (DBeaver
+etc.) without re-running the report. Each run fully replaces the prior 'dq'
+object — a --persist run without --with-llm drops the Stage 2 fields rather
+than merging, so the stored dq always matches exactly what that run printed.
+
 Usage:
     python scripts/dq_report.py
     python scripts/dq_report.py --with-llm
+    python scripts/dq_report.py --with-llm --persist
     python scripts/dq_report.py --stale-years 1 --dup-threshold 0.9 --min-words 30
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import re
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
 import numpy as np
 import psycopg
@@ -299,6 +308,57 @@ def render_report(scores: list[DocScore], with_llm: bool) -> str:
     return "\n".join(lines)
 
 
+# --- Persistence ---------------------------------------------------------------
+
+
+def _dq_dict(score: DocScore, with_llm: bool, checked_at: str) -> dict:
+    """Shape a DocScore into the object stored at metadata->'dq'.
+
+    Only includes the Stage 2 keys (markup_residue/staleness_marker/llm_score)
+    when this run actually computed them — a --persist run without --with-llm
+    won't silently wipe those fields with False, it just leaves them out (see
+    _persist_scores: each run fully replaces the prior 'dq' object, so a
+    Stage-1-only run does drop stale Stage 2 results rather than merge with
+    them — the stored dq always reflects exactly what the last run printed).
+    """
+    d = {
+        "checked_at": checked_at,
+        "stale": score.stale,
+        "orphaned_owner": score.orphaned_owner,
+        "unlabeled": score.unlabeled,
+        "never_reviewed": score.never_reviewed,
+        "orphan_page": score.orphan_page,
+        "bad_status": score.bad_status,
+        "stub": score.stub,
+        "words": score.words,
+        "duplicate_of": score.duplicate_of,
+    }
+    if with_llm:
+        d["markup_residue"] = score.markup_residue
+        d["staleness_marker"] = score.staleness_marker
+        d["llm_score"] = score.llm_score
+    d["issue_count"] = score.issue_count
+    return d
+
+
+def _persist_scores(conn: psycopg.Connection, scores: dict[str, DocScore], with_llm: bool) -> None:
+    """Write each document's dq object into document_metadata.metadata->'dq'."""
+    checked_at = datetime.now(UTC).isoformat()
+    with conn.cursor() as cur:
+        cur.executemany(
+            """
+            UPDATE document_metadata
+            SET metadata = jsonb_set(metadata, '{dq}', %s::jsonb),
+                updated_at = now()
+            WHERE source = %s
+            """,
+            [
+                (json.dumps(_dq_dict(score, with_llm, checked_at)), source)
+                for source, score in scores.items()
+            ],
+        )
+
+
 # --- CLI -----------------------------------------------------------------------
 
 
@@ -333,6 +393,12 @@ def main() -> None:
         action="store_true",
         help="Also run markup-residue/staleness-marker regex checks and an LLM quality judge.",
     )
+    parser.add_argument(
+        "--persist",
+        action="store_true",
+        help="Write the computed dq object back into document_metadata.metadata->'dq' "
+        "(queryable via SQL/DBeaver). Off by default — this tool is read-only unless asked.",
+    )
     args = parser.parse_args()
 
     with connect() as conn:
@@ -365,7 +431,12 @@ def main() -> None:
                 s.staleness_marker = _staleness_marker(text)
                 s.llm_score = _judge_score(client, text)
 
+        if args.persist:
+            _persist_scores(conn, scores, with_llm=args.with_llm)
+
     print(render_report(list(scores.values()), with_llm=args.with_llm))
+    if args.persist:
+        print(f"\nPersisted dq scores for {len(scores)} document(s) to document_metadata.")
 
 
 if __name__ == "__main__":

@@ -1,9 +1,9 @@
 """Pure-logic tests for scripts/dq_report.py — no DB, no LLM.
 
 SQL-touching functions (_metadata_checks, _word_counts, _mean_embeddings,
-_content_by_source) need a live Postgres and aren't unit tested here, same as
-other DB-fetching functions in this codebase; they were verified against the
-real ingested QA-space corpus.
+_content_by_source, _persist_scores) need a live Postgres and aren't unit
+tested here, same as other DB-fetching functions in this codebase; they were
+verified against the real ingested QA-space corpus.
 """
 
 import numpy as np
@@ -11,6 +11,7 @@ import pytest
 
 from scripts.dq_report import (
     DocScore,
+    _dq_dict,
     _duplicate_pairs,
     _markup_residue,
     _parse_judge_score,
@@ -115,3 +116,24 @@ def test_render_report_sorts_worst_first():
 @pytest.mark.parametrize("text", ["", "no markup or entities here"])
 def test_markup_residue_various_clean_inputs(text):
     assert not _markup_residue(text)
+
+
+def test_dq_dict_omits_stage2_fields_without_llm():
+    score = DocScore(source="s", title="t", stale=True, words=42, duplicate_of=["other"])
+    d = _dq_dict(score, with_llm=False, checked_at="2026-07-02T00:00:00+00:00")
+    assert d["checked_at"] == "2026-07-02T00:00:00+00:00"
+    assert d["stale"] is True
+    assert d["words"] == 42
+    assert d["duplicate_of"] == ["other"]
+    assert d["issue_count"] == score.issue_count
+    assert "markup_residue" not in d
+    assert "staleness_marker" not in d
+    assert "llm_score" not in d
+
+
+def test_dq_dict_includes_stage2_fields_with_llm():
+    score = DocScore(source="s", title="t", markup_residue=True, llm_score=0.7)
+    d = _dq_dict(score, with_llm=True, checked_at="2026-07-02T00:00:00+00:00")
+    assert d["markup_residue"] is True
+    assert d["staleness_marker"] is False
+    assert d["llm_score"] == 0.7
