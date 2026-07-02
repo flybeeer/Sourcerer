@@ -66,6 +66,7 @@ sourcerer-eval = "scripts.run_eval:main"
 sourcerer-route-report = "scripts.route_report:main"
 sourcerer-graphrag-index = "scripts.graphrag_index:main"
 sourcerer-graphrag-eval = "scripts.graphrag_eval:main"
+sourcerer-dq-report = "scripts.dq_report:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/sourcerer"]
