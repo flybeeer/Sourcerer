@@ -89,30 +89,40 @@ def get_pdp(settings: Settings) -> PDP:
     raise ValueError(f"Unknown GOVERNANCE_PDP: {settings.governance_pdp!r} (local | cerbos)")
 
 
-def _document_assets(settings: Settings) -> list[Asset]:
-    """Build an Asset for every source in the corpus (catalogued or defaulted).
+def _document_assets(
+    settings: Settings, sources: list[str] | set[str] | None = None
+) -> list[Asset]:
+    """Build an Asset for every source (catalogued or defaulted).
 
-    Untagged sources take GOVERNANCE_DEFAULT_CLASSIFICATION (default public), so
-    enabling governance only restricts what you've explicitly tagged.
+    The source *universe* defaults to the ingested corpus (the `chunks` table),
+    but a caller may pass its own — e.g. CAG enumerates documents from disk, so it
+    can authorize files that were never run through the ingestion pipeline. Either
+    way, untagged sources take GOVERNANCE_DEFAULT_CLASSIFICATION (default public),
+    so enabling governance only restricts what you've explicitly tagged.
     """
     tagged = {a.id: a for a in catalog.list_assets("document")}
     default = settings.governance_default_classification
+    names = sources if sources is not None else [s["source"] for s in corpus.list_sources()]
     return [
-        tagged.get(s["source"], Asset(kind="document", id=s["source"], classification=default))
-        for s in corpus.list_sources()
+        tagged.get(n, Asset(kind="document", id=n, classification=default)) for n in names
     ]
 
 
-def allowed_document_sources(principal: Principal | None, settings: Settings) -> set[str] | None:
+def allowed_document_sources(
+    principal: Principal | None,
+    settings: Settings,
+    sources: list[str] | set[str] | None = None,
+) -> set[str] | None:
     """Sources `principal` may read, or None when governance is disabled.
 
     None = no filter (governance off → unchanged behaviour). A set (possibly
     empty) = restrict retrieval to exactly those sources; an empty set correctly
-    yields no results rather than "no filter".
+    yields no results rather than "no filter". `sources` overrides the universe to
+    authorize against (default: the ingested corpus) — CAG passes its on-disk set.
     """
     if not settings.governance_enabled or principal is None:
         return None
-    return get_pdp(settings).readable(principal, _document_assets(settings))
+    return get_pdp(settings).readable(principal, _document_assets(settings, sources))
 
 
 def filter_readable_communities(

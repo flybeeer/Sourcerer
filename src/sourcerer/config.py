@@ -160,6 +160,13 @@ class Settings(BaseSettings):
     # (no infra; runs the eval/tests); cerbos = the externalised Cerbos PDP sidecar
     # over the same YAML policy. Mirrors LOCAL_BACKEND / SQL_KB_BACKEND.
     governance_pdp: str = "local"  # local | cerbos
+    # Predicate pushdown for the document gate (only with GOVERNANCE_PDP=cerbos).
+    # Off: enumerate every candidate source and ask Cerbos CheckResources (payload
+    # grows with the corpus). On: ask Cerbos PlanResources once and translate the
+    # returned plan to a SQL WHERE (governance/plan.py) — one round-trip, cost
+    # independent of corpus size. CAG honours this flag; both paths yield the same
+    # readable set (verified by scripts/plan_parity.py).
+    governance_pushdown: bool = False
     # Cerbos PDP sidecar endpoint (used when GOVERNANCE_PDP=cerbos).
     cerbos_endpoint: str = "http://localhost:3592"
     # Sensitivity assumed for a source with no asset_catalog entry. Default public
@@ -176,6 +183,22 @@ class Settings(BaseSettings):
     governance_rls_enabled: bool = False
     rls_reader_user: str = "sourcerer_reader"
     rls_reader_password: str = "reader_change_me"
+
+    # ---------- Confluence ingestion (optional) ----------
+    # Pull Confluence Cloud pages in as documents via a CQL query — same idea as
+    # the SQL KB's user-written SELECT: the query defines what to ingest. Run via
+    # scripts/ingest_confluence.py; ingestion-only, no runtime routing.
+    confluence_base_url: str = ""  # e.g. https://yoursite.atlassian.net/wiki
+    confluence_email: str = ""  # Confluence Cloud account email, paired with an API token
+    confluence_api_token: str = ""
+    confluence_max_pages: int = 1000  # safety cap on pages pulled per ingest run
+
+    # ---------- Cache-Augmented Generation (CAG PoC, optional) ----------
+    # CAG preloads whole authorized documents into the prompt instead of retrieving
+    # per query, so it needs neither chunking nor embeddings — only the full text.
+    # It reads documents straight from this directory (basename = the ingest source
+    # label / asset id), so CAG works without ever running the ingestion pipeline.
+    cag_corpus_dir: str = "data/raw"
 
     @property
     def dsn(self) -> str:

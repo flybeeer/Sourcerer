@@ -16,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from sourcerer.db.session import connect
-from sourcerer.governance.catalog import classification_rank
+from sourcerer.governance.catalog import CLASSIFICATIONS, classification_rank
 
 
 @dataclass(frozen=True)
@@ -34,12 +34,27 @@ class Principal:
         """Rank of this principal's clearance on the classification lattice."""
         return classification_rank(self.clearance)
 
+    @property
+    def readable_classifications(self) -> list[str]:
+        """The classification levels this clearance can read (lattice ≤ clearance).
+
+        Precomputes the lattice comparison as an explicit set so the Cerbos policy
+        can be `R.attr.classification in P.attr.readable_classifications` instead of
+        rank arithmetic over a map — which keeps PlanResources' emitted plan a plain
+        `IN`, translatable to a SQL `= ANY(...)` (see governance/plan.py). Equivalent
+        to `clearance_rank >= classification_rank(c)` in policy.can_read, so local /
+        Cerbos / plan PDPs stay in parity. Unknown classifications (rank > lattice)
+        are excluded — fail-safe, matching can_read.
+        """
+        return [c for c in CLASSIFICATIONS if self.clearance_rank >= classification_rank(c)]
+
     def attr(self) -> dict:
         """Attribute bag shaped for a Cerbos `principal.attr` (used from 10b)."""
         return {
             "clearance": self.clearance,
             "teams": self.teams,
             "region": self.region,
+            "readable_classifications": self.readable_classifications,
         }
 
 

@@ -73,7 +73,31 @@ def test_asset_attr_bag_carries_governance_fields():
 
 def test_principal_attr_bag_carries_abac_fields():
     p = Principal(id="alice", roles=["analyst"], clearance="internal", teams=["ops"], region="APAC")
-    assert p.attr() == {"clearance": "internal", "teams": ["ops"], "region": "APAC"}
+    assert p.attr() == {
+        "clearance": "internal",
+        "teams": ["ops"],
+        "region": "APAC",
+        # Precomputed lattice set (≤ internal) so the Cerbos policy can use plain
+        # `in` membership — see Principal.readable_classifications / policies/document.yaml.
+        "readable_classifications": ["public", "internal"],
+    }
+
+
+def test_readable_classifications_match_lattice():
+    # Parity guard: the precomputed set must equal "every level ≤ clearance",
+    # the same comparison policy.can_read makes — so local/Cerbos/plan agree.
+    assert Principal(id="a", clearance="public").readable_classifications == ["public"]
+    assert Principal(id="a", clearance="confidential").readable_classifications == [
+        "public",
+        "internal",
+        "confidential",
+    ]
+    assert Principal(id="a", clearance="restricted").readable_classifications == [
+        "public",
+        "internal",
+        "confidential",
+        "restricted",
+    ]
 
 
 # ---------- fail-closed identity resolution ----------
@@ -239,3 +263,157 @@ def test_community_dropped_when_any_source_forbidden(monkeypatch):
     kept, denied = gate_mod.filter_readable_communities(comms, ANONYMOUS, settings)
     assert [c.sources for c in kept] == [["faq.md"]]  # only the all-public community
     assert denied == 2
+
+
+# ---------- PlanResources → SQL translator (governance/plan.py) ----------
+#
+# The operand shapes below are exactly what Cerbos emits for policies/document.yaml
+# (captured from a live sidecar via scripts/plan_parity.py). End-to-end parity with
+# local/CheckResources is asserted there; these lock the translator's contract
+# offline. Stubs mirror the SDK's attribute interface (.expression/.operator/
+# .operands on nodes, .variable/.value on leaves).
+
+from types import SimpleNamespace as _NS  # noqa: E402
+
+from sourcerer.governance import plan as plan_mod  # noqa: E402
+
+_CLS = "request.resource.attr.classification"
+_TEAM = "request.resource.attr.owner_team"
+
+
+def _expr(operator, *operands):
+    return _NS(expression=_NS(operator=operator, operands=list(operands)))
+
+
+def _var(name):
+    return _NS(variable=name)
+
+
+def _val(value):
+    return _NS(value=value)
+
+
+def test_plan_translate_single_value_collapses_to_eq():
+    # anonymous (public clearance, no team): one readable class → Cerbos emits `eq`.
+    cond = _expr("eq", _var(_CLS), _val("public"))
+    params: list = []
+    assert plan_mod._translate(cond, params) == "classification = %s"
+    assert params == ["public"]
+
+
+def test_plan_translate_or_of_in_and_eq():
+    # alice (internal, team=[ops]): class `in` list, single team folded to `eq`.
+    cond = _expr(
+        "or",
+        _expr("in", _var(_CLS), _val(["public", "internal"])),
+        _expr("eq", _var(_TEAM), _val("ops")),
+    )
+    params: list = []
+    assert plan_mod._translate(cond, params) == "(classification = ANY(%s) OR owner_team = %s)"
+    assert params == [["public", "internal"], "ops"]
+
+
+def test_plan_translate_or_of_two_in_lists():
+    # bob (confidential, teams=[hr-team, ops]): both legs are `in` over lists.
+    cond = _expr(
+        "or",
+        _expr("in", _var(_CLS), _val(["public", "internal", "confidential"])),
+        _expr("in", _var(_TEAM), _val(["hr-team", "ops"])),
+    )
+    params: list = []
+    assert plan_mod._translate(cond, params) == "(classification = ANY(%s) OR owner_team = ANY(%s))"
+    assert params == [["public", "internal", "confidential"], ["hr-team", "ops"]]
+
+
+def test_plan_translate_rejects_ungoverned_attribute():
+    # A predicate over an attribute we don't map must fail closed, never silently pass.
+    cond = _expr("eq", _var("request.resource.attr.region"), _val("APAC"))
+    try:
+        plan_mod._translate(cond, [])
+    except ValueError as exc:
+        assert "ungoverned attribute" in str(exc)
+    else:
+        raise AssertionError("expected ValueError for an ungoverned attribute")
+
+
+def test_plan_translate_rejects_unsupported_operator():
+    cond = _expr("startsWith", _var(_CLS), _val("pub"))
+    try:
+        plan_mod._translate(cond, [])
+    except ValueError as exc:
+        assert "unsupported plan operator" in str(exc)
+    else:
+        raise AssertionError("expected ValueError for an unsupported operator")
+
+
+# ---------- CAG gate dispatch: pushdown flag picks PlanResources vs CheckResources ----------
+#
+# cag.cache._gate_sources chooses between the CheckResources/local path and the
+# PlanResources pushdown path on GOVERNANCE_PUSHDOWN, then intersects with the
+# on-disk universe (CAG only serves what's on disk). Stub both gate functions so
+# the dispatch + intersection is checked without Cerbos or Postgres.
+
+from sourcerer.cag import cache as cag_cache  # noqa: E402
+
+_UNIVERSE = {"faq.md", "security.md"}
+
+
+def test_gate_sources_uses_checkresources_when_pushdown_off(monkeypatch):
+    settings = _settings(
+        governance_enabled=True, governance_pdp="cerbos", governance_pushdown=False
+    )
+    seen = {}
+
+    def fake_check(principal, s, sources=None):
+        seen["sources"] = sources
+        return {"faq.md", "off-disk.md"}  # includes a source not on disk
+
+    monkeypatch.setattr(cag_cache.governance, "allowed_document_sources", fake_check)
+    monkeypatch.setattr(
+        cag_cache.plan, "allowed_document_sources_plan", _unreached("plan must not run")
+    )
+    allowed = cag_cache._gate_sources(ANONYMOUS, settings, _UNIVERSE)
+    assert allowed == {"faq.md"}  # off-disk.md intersected away
+    assert seen["sources"] == _UNIVERSE  # CheckResources authorizes the disk universe
+
+
+def test_gate_sources_uses_plan_when_pushdown_on_with_cerbos(monkeypatch):
+    settings = _settings(governance_enabled=True, governance_pdp="cerbos", governance_pushdown=True)
+    monkeypatch.setattr(
+        cag_cache.governance, "allowed_document_sources", _unreached("check must not run")
+    )
+    monkeypatch.setattr(
+        cag_cache.plan,
+        "allowed_document_sources_plan",
+        lambda principal, s: {"faq.md", "chunks-only.md"},  # plan universe ≠ disk
+    )
+    allowed = cag_cache._gate_sources(ANONYMOUS, settings, _UNIVERSE)
+    assert allowed == {"faq.md"}  # chunks-only.md intersected away
+
+
+def test_gate_sources_pushdown_on_but_local_pdp_falls_back_to_check(monkeypatch):
+    # Pushdown needs Cerbos PlanResources; with the local PDP there's no plan, so
+    # the flag is ignored and CheckResources runs.
+    settings = _settings(governance_enabled=True, governance_pdp="local", governance_pushdown=True)
+    monkeypatch.setattr(
+        cag_cache.governance, "allowed_document_sources", lambda p, s, sources=None: {"faq.md"}
+    )
+    monkeypatch.setattr(
+        cag_cache.plan, "allowed_document_sources_plan", _unreached("plan must not run")
+    )
+    assert cag_cache._gate_sources(ANONYMOUS, settings, _UNIVERSE) == {"faq.md"}
+
+
+def test_gate_sources_returns_none_when_governance_off(monkeypatch):
+    settings = _settings(governance_enabled=False)
+    monkeypatch.setattr(
+        cag_cache.governance, "allowed_document_sources", lambda p, s, sources=None: None
+    )
+    assert cag_cache._gate_sources(None, settings, _UNIVERSE) is None
+
+
+def _unreached(msg):
+    def _boom(*a, **k):
+        raise AssertionError(msg)
+
+    return _boom
