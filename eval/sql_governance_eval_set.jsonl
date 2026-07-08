@@ -1,0 +1,10 @@
+{"principal": "anonymous", "sql": "SELECT name FROM employees"}
+{"principal": "anonymous", "sql": "SELECT name, salary FROM employees"}
+{"principal": "anonymous", "sql": "SELECT * FROM employees"}
+{"principal": "alice", "sql": "SELECT name, salary FROM employees"}
+{"principal": "alice", "sql": "SELECT avg(salary) AS avg_pay FROM employees"}
+{"principal": "bob", "sql": "SELECT name, salary FROM employees"}
+{"principal": "carol", "sql": "SELECT * FROM employees"}
+{"principal": "anonymous", "sql": "SELECT topic FROM board"}
+{"principal": "alice", "sql": "SELECT topic FROM board"}
+{"principal": "carol", "sql": "SELECT topic FROM board"}

@@ -147,6 +147,36 @@ class Settings(BaseSettings):
     # default (local keeps it free/private); turn on for harder schemas. Needs a key.
     sql_kb_generate_with_api: bool = False
 
+    # ---------- Data governance (Phase 10, optional) ----------
+    # Authorize at retrieval/execution time so forbidden chunks/rows/communities
+    # never enter the candidate set. Sub-phase 10a wires only the catalog (asset
+    # metadata) and the principal identity on each request — nothing is enforced
+    # yet; the Cerbos gate (PlanResources→WHERE, SQLGlot+CheckResources) lands in
+    # 10b+. Mirrors the LOCAL_BACKEND / SQL_KB_BACKEND swap pattern.
+    governance_enabled: bool = False
+    # Where asset metadata (classification/owner_team/pii_tags) lives.
+    catalog_backend: str = "local"  # local (asset_catalog in Postgres) | openmetadata (prod swap)
+    # Policy decision point (10b). local = the reference policy evaluated in-process
+    # (no infra; runs the eval/tests); cerbos = the externalised Cerbos PDP sidecar
+    # over the same YAML policy. Mirrors LOCAL_BACKEND / SQL_KB_BACKEND.
+    governance_pdp: str = "local"  # local | cerbos
+    # Cerbos PDP sidecar endpoint (used when GOVERNANCE_PDP=cerbos).
+    cerbos_endpoint: str = "http://localhost:3592"
+    # Sensitivity assumed for a source with no asset_catalog entry. Default public
+    # so enabling governance only restricts what you explicitly tag — untagged docs
+    # stay world-readable rather than vanishing. Raise to fail-safe a strict corpus.
+    governance_default_classification: str = "public"
+    # Request header carrying the principal id (stub IdP; JWT claims later).
+    principal_header: str = "X-Principal"
+    # Postgres row-level security backstop (defense-in-depth). When on, document
+    # retrieval runs under a restricted, non-superuser reader role whose RLS policy
+    # *recomputes* the access rule in the database from the catalog + the principal
+    # — so even a bug in the app-level gate can't return forbidden rows. Off by
+    # default; run scripts/setup_rls.py once to provision the role + policy.
+    governance_rls_enabled: bool = False
+    rls_reader_user: str = "sourcerer_reader"
+    rls_reader_password: str = "reader_change_me"
+
     @property
     def dsn(self) -> str:
         """Build the Postgres connection string from parts.
@@ -157,6 +187,14 @@ class Settings(BaseSettings):
         """
         return (
             f"postgresql://{self.postgres_user}:{self.postgres_password}"
+            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+        )
+
+    @property
+    def reader_dsn(self) -> str:
+        """DSN for the restricted RLS reader role (subject to row-level security)."""
+        return (
+            f"postgresql://{self.rls_reader_user}:{self.rls_reader_password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
 

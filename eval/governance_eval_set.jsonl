@@ -1,0 +1,12 @@
+{"principal": "anonymous", "query": "office opening hours", "answer_source": "faq.md", "authorized": true}
+{"principal": "anonymous", "query": "employee salary bands for a senior engineer", "answer_source": "handbook.md", "authorized": false}
+{"principal": "anonymous", "query": "board acquisition minutes", "answer_source": "board.md", "authorized": false}
+{"principal": "alice", "query": "password rotation policy", "answer_source": "security.md", "authorized": true}
+{"principal": "alice", "query": "office opening hours", "answer_source": "faq.md", "authorized": true}
+{"principal": "alice", "query": "employee salary bands for a senior engineer", "answer_source": "handbook.md", "authorized": false}
+{"principal": "alice", "query": "board acquisition minutes", "answer_source": "board.md", "authorized": false}
+{"principal": "bob", "query": "employee salary bands for a senior engineer", "answer_source": "handbook.md", "authorized": true}
+{"principal": "bob", "query": "password rotation policy", "answer_source": "security.md", "authorized": true}
+{"principal": "bob", "query": "board acquisition minutes", "answer_source": "board.md", "authorized": false}
+{"principal": "carol", "query": "board acquisition minutes", "answer_source": "board.md", "authorized": true}
+{"principal": "carol", "query": "employee salary bands for a senior engineer", "answer_source": "handbook.md", "authorized": true}

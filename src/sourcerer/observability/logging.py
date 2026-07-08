@@ -24,14 +24,21 @@ def log_query(
     cost_usd: float = 0.0,
     router_reason: str | None = None,
     difficulty: float | None = None,
+    principal: str | None = None,
+    denied_assets: int | None = None,
 ) -> None:
-    """Insert a record of an answered query, including the Phase 4 routing trace."""
+    """Insert a record of an answered query, including the Phase 4 routing trace.
+
+    `principal` (Phase 10a) records who asked; `denied_assets` (Phase 10d) records
+    how many assets the governance gate hid. Both NULL when governance is disabled.
+    """
     with connect() as conn:
         conn.execute(
             "INSERT INTO query_log "
             "(query, answer, num_citations, latency_ms, route, model, "
-            " input_tokens, output_tokens, cost_usd, router_reason, difficulty) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            " input_tokens, output_tokens, cost_usd, router_reason, difficulty, "
+            " principal, denied_assets) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             (
                 query,
                 answer,
@@ -44,6 +51,8 @@ def log_query(
                 cost_usd,
                 router_reason,
                 difficulty,
+                principal,
+                denied_assets,
             ),
         )
 

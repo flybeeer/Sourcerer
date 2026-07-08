@@ -52,24 +52,29 @@ def _store_document(conn: psycopg.Connection, source: str, text: str, settings: 
     return len(chunks)
 
 
-def _ingest(items: Iterable[tuple[str, str]]) -> dict[str, int]:
-    """Ingest an iterable of (source, text) pairs. Returns {documents, chunks}."""
+def _ingest(items: Iterable[tuple[str, str]]) -> dict:
+    """Ingest an iterable of (source, text) pairs.
+
+    Returns {documents, chunks, sources} — `sources` lists the names actually
+    stored (drops empty docs), so callers like the governance tagger know exactly
+    which assets to catalogue.
+    """
     settings = get_settings()
     init_schema()
 
-    total_docs = 0
+    sources: list[str] = []
     total_chunks = 0
     with connect() as conn:
         for source, text in items:
             n = _store_document(conn, source, text, settings)
             if n:
-                total_docs += 1
+                sources.append(source)
                 total_chunks += n
-    return {"documents": total_docs, "chunks": total_chunks}
+    return {"documents": len(sources), "chunks": total_chunks, "sources": sources}
 
 
-def ingest_directory(root: Path) -> dict[str, int]:
-    """Ingest every supported document under `root`. Returns {documents, chunks}."""
+def ingest_directory(root: Path) -> dict:
+    """Ingest every supported document under `root`. Returns {documents, chunks, sources}."""
     return _ingest((path.name, text) for path, text in iter_documents(root))
 
 
@@ -79,11 +84,11 @@ def ingest_sql(
     *,
     id_col: str | None = None,
     source_prefix: str | None = None,
-) -> dict[str, int]:
+) -> dict:
     """Ingest rows from a SQLite database as documents (Phase 7, Path A).
 
     Each row returned by `query` becomes one document; `id_col` (if given) names
-    its source for stable, traceable citations. Returns {documents, chunks}.
+    its source for stable, traceable citations. Returns {documents, chunks, sources}.
     """
     return _ingest(
         iter_rows(db_path, query, id_col=id_col, source_prefix=source_prefix)

@@ -1,0 +1,39 @@
+# Cerbos resource policy for table assets (Phase 10b).
+#
+# This mirrors src/sourcerer/governance/policy.py — the written reference policy.
+# When GOVERNANCE_PDP=cerbos, the gate asks this PDP instead of evaluating
+# policy.can_read in-process; both must yield the same allow/deny.
+#
+#   ALLOW read if  principal is admin
+#              OR  clearance_rank(principal) >= clearance_rank(asset)   (lattice)
+#              OR  asset.owner_team in principal.teams                  (ownership)
+#
+# Unknown levels are ranked fail-safe (clearance→lowest, classification→highest),
+# matching catalog.classification_rank.
+---
+apiVersion: api.cerbos.dev/v1
+resourcePolicy:
+  version: default
+  resource: table
+  variables:
+    local:
+      rank: '{"public": 0, "internal": 1, "confidential": 2, "restricted": 3}'
+      principalRank: >-
+        P.attr.clearance in V.rank ? V.rank[P.attr.clearance] : 0
+      assetRank: >-
+        R.attr.classification in V.rank ? V.rank[R.attr.classification] : 99
+  rules:
+    # Admins read anything.
+    - actions: ["read"]
+      effect: EFFECT_ALLOW
+      roles: ["admin"]
+
+    # Everyone else: clearance lattice OR team ownership (ABAC).
+    - actions: ["read"]
+      effect: EFFECT_ALLOW
+      roles: ["*"]
+      condition:
+        match:
+          expr: >-
+            V.principalRank >= V.assetRank
+            || (has(R.attr.owner_team) && R.attr.owner_team in P.attr.teams)

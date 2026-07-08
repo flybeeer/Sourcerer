@@ -40,11 +40,19 @@ def log_query_event(
     latency_ms: int,
     answered: bool,
     guardrail: str | None = None,
+    principal: str | None = None,
+    denied_assets: int | None = None,
 ) -> None:
-    """Emit one structured JSON log line for an answered (or refused) query."""
+    """Emit one structured JSON log line for an answered (or refused) query.
+
+    `principal` (Phase 10a) is the identity that issued the query; `denied_assets`
+    (Phase 10d) is how many assets the gate hid. Both None when governance is off.
+    """
     event = {
         "event": "query",
         "query": query,
+        "principal": principal,
+        "denied_assets": denied_assets,
         "retrieval_mode": retrieval_mode,
         "retrieved": retrieval_trace(chunks),
         "num_retrieved": len(chunks),

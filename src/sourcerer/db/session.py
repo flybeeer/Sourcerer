@@ -27,13 +27,27 @@ def to_vector_literal(vec: list[float]) -> str:
 
 
 @contextmanager
-def connect() -> Iterator[psycopg.Connection]:
+def connect(reader_principal: str | None = None) -> Iterator[psycopg.Connection]:
     """Yield a pgvector-aware connection, committing on success.
 
     Ensures the `vector` extension is present (harmless if already enabled) and
     registers the vector type adapters so Python lists map to/from `vector`.
+
+    `reader_principal` (Phase 10d RLS backstop) connects under the restricted,
+    non-superuser reader role instead and sets the `sourcerer.principal` session
+    setting, so the row-level security policy on `chunks` filters rows in the
+    database for that principal — independently of any app-level gate. The reader
+    can't create extensions, so that step is skipped (the extension already exists).
     """
     settings = get_settings()
+    if reader_principal is not None:
+        with psycopg.connect(settings.reader_dsn) as conn:
+            # set_config(name, value, is_local=false) → session-scoped GUC the RLS
+            # policy reads via current_setting('sourcerer.principal', true).
+            conn.execute("SELECT set_config('sourcerer.principal', %s, false)", (reader_principal,))
+            register_vector(conn)
+            yield conn
+        return
     with psycopg.connect(settings.dsn) as conn:
         conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
         register_vector(conn)
@@ -97,6 +111,11 @@ def init_schema() -> None:
             "cost_usd DOUBLE PRECISION NOT NULL DEFAULT 0",
             "router_reason TEXT",
             "difficulty DOUBLE PRECISION",
+            # Phase 10a — principal that issued the query (NULL = governance off).
+            "principal TEXT",
+            # Phase 10d — how many assets the gate hid from this principal (audit;
+            # NULL = governance off / path doesn't count denials).
+            "denied_assets INTEGER",
         ):
             conn.execute(f"ALTER TABLE query_log ADD COLUMN IF NOT EXISTS {ddl}")
 

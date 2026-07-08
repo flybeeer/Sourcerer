@@ -12,6 +12,7 @@ from pathlib import Path
 from sourcerer.config import Settings
 from sourcerer.generation.generator import Answer, Citation
 from sourcerer.generation.prompts import NO_ANSWER, build_sql_answer_messages
+from sourcerer.governance.principal import Principal
 from sourcerer.llm.client import LLMClient
 from sourcerer.sqlkb import text_to_sql
 
@@ -28,16 +29,21 @@ def _citation(execution: text_to_sql.SQLExecution, db_stem: str) -> Citation:
 
 
 def answer(
-    query: str, settings: Settings, sql_client: LLMClient, answer_client: LLMClient
+    query: str,
+    settings: Settings,
+    sql_client: LLMClient,
+    answer_client: LLMClient,
+    principal: Principal | None = None,
 ) -> Answer:
     """Run Text-to-SQL and synthesize a grounded, cited answer.
 
     `sql_client` writes the query (local by default, API when configured);
     `answer_client` phrases the result (follows the router's local/api decision).
+    `principal` drives the Phase 10c governance gate (table reject / PII masking).
     Token usage from both calls is summed onto the returned Answer.
     """
     db_stem = Path(settings.sql_kb_path).stem
-    execution = text_to_sql.run(query, settings, sql_client)
+    execution = text_to_sql.run(query, settings, sql_client, principal)
 
     # Generation failed validation/execution → no answer (guardrail, never guess).
     if not execution.ok:
